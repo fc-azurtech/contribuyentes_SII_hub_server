@@ -85,6 +85,10 @@ Se siembra automáticamente en primer inicio con:
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD`
 
+Notas:
+- `bcrypt` queda fijado en versión compatible con `passlib` para evitar fallas de arranque/reset de clave.
+- Mantener `ADMIN_PASSWORD` por debajo de 72 caracteres por limitación de bcrypt.
+
 ## Seguridad API
 
 Se siembra un cliente API inicial con:

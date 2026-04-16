@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="card">
+    <h2>Configuración de fuentes SII</h2>
+    <form method="post">
+        <label>URL Direcciones</label>
+        <input name="sii_direcciones_url" value="{{ cfg.sii_direcciones_url }}" required />
+
+        <label>URL ACTECOS</label>
+        <input name="sii_actecos_url" value="{{ cfg.sii_actecos_url }}" required />
+
+        <label>URL base contribuyentes (opcional)</label>
+        <input name="sii_base_contribuyentes_url" value="{{ cfg.sii_base_contribuyentes_url }}" />
+
+        <button type="submit">Guardar</button>
+    </form>
+</div>
+{% endblock %}

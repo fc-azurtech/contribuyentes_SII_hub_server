@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Login - Taxpayer Hub</title>
+    <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body class="login-page">
+    <form method="post" class="card">
+        <h2>Acceso administrador</h2>
+        {% if error %}<p class="error">{{ error }}</p>{% endif %}
+        <label>Usuario</label>
+        <input name="username" required />
+        <label>Clave</label>
+        <input name="password" type="password" required />
+        <button type="submit">Ingresar</button>
+    </form>
+</body>
+</html>

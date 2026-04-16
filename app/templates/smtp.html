@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="card">
+    <h2>Configuración SMTP y alertas</h2>
+    {% if saved %}<p class="ok">Configuración guardada.</p>{% endif %}
+    <form method="post">
+        <label>Servidor SMTP</label>
+        <input name="smtp_host" value="{{ cfg.smtp_host }}" />
+
+        <label>Puerto</label>
+        <input name="smtp_port" value="{{ cfg.smtp_port }}" />
+
+        <label>Usuario</label>
+        <input name="smtp_username" value="{{ cfg.smtp_username }}" />
+
+        <label>Clave</label>
+        <input name="smtp_password" type="password" value="{{ cfg.smtp_password }}" />
+
+        <label>TLS (true/false)</label>
+        <input name="smtp_tls" value="{{ cfg.smtp_tls }}" />
+
+        <label>From</label>
+        <input name="smtp_from" value="{{ cfg.smtp_from }}" />
+
+        <label>Email destino alertas</label>
+        <input name="alert_email_to" value="{{ cfg.alert_email_to }}" />
+
+        <button type="submit">Guardar</button>
+        <button class="secondary" type="submit" name="send_test" value="1">Guardar y enviar prueba</button>
+    </form>
+</div>
+{% endblock %}

@@ -21,6 +21,7 @@ app = FastAPI(title=settings.app_name)
 app.add_middleware(SessionMiddleware, secret_key=settings.app_secret_key)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
+templates.env.globals["app_name"] = settings.app_name
 
 scheduler = AsyncIOScheduler()
 

@@ -65,6 +65,20 @@ El script:
 - instala servicio systemd `taxpayer-hub`
 - levanta el servicio y habilita arranque automático
 
+## Desinstalación Debian
+
+Desinstalación básica (mantiene DB/usuario/nginx):
+
+```bash
+sudo bash scripts/uninstall_debian.sh
+```
+
+Desinstalación completa:
+
+```bash
+sudo bash scripts/uninstall_debian.sh --purge-db --purge-user --purge-nginx
+```
+
 ## Login administrador
 
 Se siembra automáticamente en primer inicio con:

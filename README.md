@@ -40,6 +40,12 @@ Respuesta 200:
 ### `POST /taxpayers/override`
 Para registrar override desde PDF/manual (por ejemplo portal Odoo).
 
+## Sync semanal y progreso
+
+- La actualización usa staging raw (`stg_direcciones`, `stg_actecos`, `stg_nombres_pj`) y luego consolida en tablas de servicio.
+- El botón **Forzar actualización ahora** se ejecuta en segundo plano.
+- Estado en vivo para UI: `GET /admin/sync/status`.
+
 ## Inicio rápido local
 
 ```bash
@@ -64,6 +70,14 @@ El script:
 - crea DB y usuario PostgreSQL
 - instala servicio systemd `taxpayer-hub`
 - levanta el servicio y habilita arranque automático
+
+Para desplegar cambios sin romper el entorno virtual ni el `.env`:
+
+```bash
+sudo rsync -av --delete --exclude '.venv/' --exclude '.env' --exclude '.git/' /azursoft/contribuyentes_SII_hub_server/ /opt/taxpayer_hub/
+sudo chown -R taxpayerhub:taxpayerhub /opt/taxpayer_hub
+sudo systemctl restart taxpayer-hub
+```
 
 ## Desinstalación Debian
 

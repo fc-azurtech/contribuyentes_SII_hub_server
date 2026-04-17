@@ -6,9 +6,19 @@
     <div class="card">
         <h3>Acciones</h3>
         <form method="post" action="/admin/sync/force" class="inline-form">
-            <button type="submit">Forzar actualización ahora</button>
+            <button id="forceSyncBtn" type="submit">Forzar actualización ahora</button>
         </form>
     </div>
+</div>
+
+<div class="card" style="margin-top:16px;">
+    <h3>Progreso de actualización</h3>
+    <div id="syncStage" class="muted"></div>
+    <div class="progress-track">
+        <div id="syncBar" class="progress-bar" style="width:0%"></div>
+    </div>
+    <div id="syncMessage" class="muted"></div>
+    <div id="syncCounters" class="muted"></div>
 </div>
 
 <div class="card" style="margin-top:16px;">
@@ -31,4 +41,45 @@
         </tbody>
     </table>
 </div>
+
+<script>
+    async function refreshSyncStatus() {
+        try {
+            const response = await fetch('/admin/sync/status', { credentials: 'same-origin' });
+            if (!response.ok) {
+                return;
+            }
+            const data = await response.json();
+            const run = data.run;
+            const btn = document.getElementById('forceSyncBtn');
+            const stage = document.getElementById('syncStage');
+            const bar = document.getElementById('syncBar');
+            const message = document.getElementById('syncMessage');
+            const counters = document.getElementById('syncCounters');
+
+            if (!run) {
+                stage.textContent = 'Sin ejecuciones registradas';
+                bar.style.width = '0%';
+                message.textContent = '';
+                counters.textContent = '';
+                btn.disabled = false;
+                return;
+            }
+
+            stage.textContent = 'Etapa: ' + (run.stage || '-') + ' | Estado: ' + (run.status || '-');
+            bar.style.width = (run.progress_percent || 0) + '%';
+            message.textContent = run.message || '';
+            counters.textContent =
+                'Procesados: ' + (run.processed_rows || 0) + '/' + (run.total_rows || 0) +
+                ' | Insertados: ' + (run.inserted_count || 0) +
+                ' | Actualizados: ' + (run.updated_count || 0);
+            btn.disabled = !!data.running;
+        } catch (err) {
+            // Silent: status endpoint is best-effort for UI progress.
+        }
+    }
+
+    refreshSyncStatus();
+    setInterval(refreshSyncStatus, 2000);
+</script>
 {% endblock %}

@@ -1,3 +1,5 @@
+import logging
+import threading
 from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -5,7 +7,7 @@ from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, text
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -24,6 +26,8 @@ templates = Jinja2Templates(directory="app/templates")
 templates.env.globals["app_name"] = settings.app_name
 
 scheduler = AsyncIOScheduler()
+sync_lock = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_SETTING_KEYS = {
@@ -126,9 +130,22 @@ def seed_defaults(session: Session):
             session.add(SystemSetting(key=key, value=default or "", updated_at=datetime.utcnow()))
 
 
+def ensure_schema_compatibility():
+    statements = [
+        "ALTER TABLE sync_run ADD COLUMN IF NOT EXISTS stage VARCHAR(40) NOT NULL DEFAULT 'queued'",
+        "ALTER TABLE sync_run ADD COLUMN IF NOT EXISTS total_rows INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE sync_run ADD COLUMN IF NOT EXISTS processed_rows INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE sync_run ADD COLUMN IF NOT EXISTS progress_percent INTEGER NOT NULL DEFAULT 0",
+    ]
+    with engine.begin() as conn:
+        for stmt in statements:
+            conn.execute(text(stmt))
+
+
 @app.on_event("startup")
 async def startup_event():
     Base.metadata.create_all(bind=engine)
+    ensure_schema_compatibility()
     with SessionLocal() as session:
         seed_defaults(session)
         session.commit()
@@ -151,10 +168,15 @@ async def shutdown_event():
 
 
 def _run_scheduled_sync():
+    if not sync_lock.acquire(blocking=False):
+        logger.info("Scheduled sync skipped: another sync is running")
+        return
     with SessionLocal() as session:
-        sync_service = get_sync_service(session)
-        sync_service.run_weekly_sync(session)
-        session.commit()
+        try:
+            sync_service = get_sync_service(session)
+            sync_service.run_weekly_sync(session)
+        finally:
+            sync_lock.release()
 
 
 @app.get("/health")
@@ -283,6 +305,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
     total = db.scalar(select(func.count()).select_from(Taxpayer))
     overrides = db.scalar(select(func.count()).select_from(Taxpayer).where(Taxpayer.is_override.is_(True)))
     last_runs = db.scalars(select(SyncRun).order_by(desc(SyncRun.started_at)).limit(10)).all()
+    active_run = db.scalar(select(SyncRun).where(SyncRun.status == "running").order_by(desc(SyncRun.started_at)))
     return templates.TemplateResponse(
         "dashboard.html",
         {
@@ -290,17 +313,63 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
             "total": total,
             "overrides": overrides,
             "last_runs": last_runs,
+            "active_run": active_run,
         },
     )
+
+
+def _run_forced_sync_in_background():
+    with SessionLocal() as session:
+        try:
+            sync_service = get_sync_service(session)
+            sync_service.run_weekly_sync(session)
+        except Exception:
+            logger.exception("Forced sync finished with error")
+        finally:
+            sync_lock.release()
 
 
 @app.post("/admin/sync/force")
 def admin_force_sync(request: Request, db: Session = Depends(get_db)):
     require_admin(request)
-    sync_service = get_sync_service(db)
-    sync_service.run_weekly_sync(db)
-    db.commit()
+    running = db.scalar(select(SyncRun).where(SyncRun.status == "running").order_by(desc(SyncRun.started_at)))
+    if running:
+        return RedirectResponse(url="/admin", status_code=303)
+
+    if not sync_lock.acquire(blocking=False):
+        return RedirectResponse(url="/admin", status_code=303)
+
+    worker = threading.Thread(target=_run_forced_sync_in_background, daemon=True)
+    worker.start()
     return RedirectResponse(url="/admin", status_code=303)
+
+
+@app.get("/admin/sync/status")
+def admin_sync_status(request: Request, db: Session = Depends(get_db)):
+    require_admin(request)
+    run = db.scalar(select(SyncRun).order_by(desc(SyncRun.started_at)).limit(1))
+    if not run:
+        return {
+            "running": False,
+            "run": None,
+        }
+
+    return {
+        "running": run.status == "running",
+        "run": {
+            "id": run.id,
+            "stage": run.stage,
+            "status": run.status,
+            "message": run.message,
+            "total_rows": run.total_rows,
+            "processed_rows": run.processed_rows,
+            "progress_percent": run.progress_percent,
+            "inserted_count": run.inserted_count,
+            "updated_count": run.updated_count,
+            "started_at": run.started_at.isoformat() if run.started_at else "",
+            "finished_at": run.finished_at.isoformat() if run.finished_at else "",
+        },
+    }
 
 
 @app.get("/admin/taxpayers")

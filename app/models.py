@@ -81,6 +81,45 @@ class SyncRun(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     finished_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
+    stage: Mapped[str] = mapped_column(String(40), nullable=False, default="queued")
     message: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    total_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    processed_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     inserted_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     updated_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class StagingDirecciones(Base):
+    __tablename__ = "stg_direcciones"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("sync_run.id", ondelete="CASCADE"), index=True, nullable=False)
+    rut_clean: Mapped[str] = mapped_column(String(16), index=True, nullable=False)
+    rut_formatted: Mapped[str] = mapped_column(String(24), nullable=False)
+    vigencia: Mapped[str] = mapped_column(String(2), nullable=False, default="")
+    tipo_direccion: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    legal_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    dte_email: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    address: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    city: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    parish: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+
+
+class StagingActecos(Base):
+    __tablename__ = "stg_actecos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("sync_run.id", ondelete="CASCADE"), index=True, nullable=False)
+    rut_clean: Mapped[str] = mapped_column(String(16), index=True, nullable=False)
+    code: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+
+class StagingNombresPJ(Base):
+    __tablename__ = "stg_nombres_pj"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("sync_run.id", ondelete="CASCADE"), index=True, nullable=False)
+    rut_clean: Mapped[str] = mapped_column(String(16), index=True, nullable=False)
+    legal_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")

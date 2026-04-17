@@ -353,6 +353,7 @@ class SyncService:
         updated = 0
         fetched_with_email = 0
         fetched_without_email = 0
+        unchanged_email = 0
         errors = 0
         first_error = ""
         client = None
@@ -388,22 +389,38 @@ class SyncService:
             except Exception as exc:
                 raise RuntimeError(f"Authenticated SII form bootstrap failed: {exc}") from exc
 
+            diagnostic_rut = clean_rut((cfg.get("sii_auth_probe_rut") or "99599860-2"))
+            diagnostic_note = ""
+            if len(diagnostic_rut) >= 8:
+                try:
+                    probe_email = (client.fetch_email_for_rut(diagnostic_rut) or "").strip()
+                    if probe_email:
+                        diagnostic_note = f" probe_rut={diagnostic_rut} probe_email={probe_email}"
+                    else:
+                        diagnostic_note = f" probe_rut={diagnostic_rut} probe_email=EMPTY"
+                except Exception as probe_exc:
+                    diagnostic_note = f" probe_rut={diagnostic_rut} probe_error={probe_exc}"
+
             taxpayers = session.scalars(
                 select(Taxpayer).where(Taxpayer.is_override.is_(False)).order_by(Taxpayer.id)
             ).all()
             run.total_rows = len(taxpayers)
-            run.message = f"Enriching DTE emails for {run.total_rows} taxpayers"
+            run.message = f"Enriching DTE emails for {run.total_rows} taxpayers{diagnostic_note}"
             session.commit()
 
             for idx, taxpayer in enumerate(taxpayers, start=1):
+                last_rut = taxpayer.rut_clean or ""
                 try:
                     fetched_email = (client.fetch_email_for_rut(taxpayer.rut_clean) or "").strip()
                     if fetched_email:
                         fetched_with_email += 1
-                        if (taxpayer.dte_email or "").strip() != fetched_email:
+                        current_email = (taxpayer.dte_email or "").strip()
+                        if current_email != fetched_email:
                             taxpayer.dte_email = fetched_email
                             taxpayer.updated_at = datetime.utcnow()
                             updated += 1
+                        else:
+                            unchanged_email += 1
                     else:
                         fetched_without_email += 1
                 except Exception as exc:
@@ -422,7 +439,8 @@ class SyncService:
                 if idx % batch_size == 0:
                     run.message = (
                         f"Auth email enrichment: {idx}/{run.total_rows} "
-                        f"with_email={fetched_with_email} no_email={fetched_without_email} errors={errors}"
+                        f"with_email={fetched_with_email} no_email={fetched_without_email} "
+                        f"unchanged_email={unchanged_email} errors={errors} last_rut={last_rut}"
                     )
                     if first_error:
                         run.message += f" first_error={first_error[:220]}"
@@ -440,7 +458,8 @@ class SyncService:
             run.inserted_count = 0
             run.message = (
                 f"Auth email enrichment finished total={run.total_rows} "
-                f"with_email={fetched_with_email} no_email={fetched_without_email} errors={errors}"
+                f"with_email={fetched_with_email} no_email={fetched_without_email} "
+                f"unchanged_email={unchanged_email} errors={errors}"
             )
             if first_error:
                 run.message += f" first_error={first_error[:220]}"

@@ -34,6 +34,9 @@ DEFAULT_SETTING_KEYS = {
     "sii_direcciones_url": settings.sii_direcciones_url,
     "sii_actecos_url": settings.sii_actecos_url,
     "sii_base_contribuyentes_url": settings.sii_base_contribuyentes_url,
+    "sync_download_timeout": str(settings.sync_download_timeout),
+    "sync_download_retries": str(settings.sync_download_retries),
+    "sync_download_backoff_seconds": str(settings.sync_download_backoff_seconds),
     "smtp_host": settings.smtp_host,
     "smtp_port": str(settings.smtp_port),
     "smtp_username": settings.smtp_username,
@@ -142,11 +145,24 @@ def ensure_schema_compatibility():
             conn.execute(text(stmt))
 
 
+def mark_interrupted_runs(session: Session):
+    running_runs = session.scalars(select(SyncRun).where(SyncRun.status == "running")).all()
+    if not running_runs:
+        return
+    now = datetime.utcnow()
+    for run in running_runs:
+        run.status = "error"
+        run.stage = "error"
+        run.finished_at = now
+        run.message = "Interrupted by service restart"
+
+
 @app.on_event("startup")
 async def startup_event():
     Base.metadata.create_all(bind=engine)
     ensure_schema_compatibility()
     with SessionLocal() as session:
+        mark_interrupted_runs(session)
         seed_defaults(session)
         session.commit()
 
@@ -405,12 +421,18 @@ def settings_sources_save(
     sii_direcciones_url: str = Form(...),
     sii_actecos_url: str = Form(...),
     sii_base_contribuyentes_url: str = Form(default=""),
+    sync_download_timeout: str = Form(default="180"),
+    sync_download_retries: str = Form(default="3"),
+    sync_download_backoff_seconds: str = Form(default="3"),
     db: Session = Depends(get_db),
 ):
     require_admin(request)
     set_setting(db, "sii_direcciones_url", sii_direcciones_url)
     set_setting(db, "sii_actecos_url", sii_actecos_url)
     set_setting(db, "sii_base_contribuyentes_url", sii_base_contribuyentes_url)
+    set_setting(db, "sync_download_timeout", sync_download_timeout)
+    set_setting(db, "sync_download_retries", sync_download_retries)
+    set_setting(db, "sync_download_backoff_seconds", sync_download_backoff_seconds)
     db.commit()
     return RedirectResponse(url="/admin/settings/sources", status_code=303)
 

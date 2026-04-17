@@ -1,8 +1,13 @@
 import csv
 import io
+import logging
+import time
 import zipfile
 
 import requests
+
+
+logger = logging.getLogger(__name__)
 
 
 def _find_column(columns, aliases):
@@ -25,31 +30,60 @@ def _parse_text_dataset(text_data: str):
     return [dict(row) for row in reader]
 
 
-def fetch_zip_rows(url: str, timeout: int = 60):
+def fetch_zip_rows(
+    url: str,
+    timeout: int = 60,
+    retries: int = 2,
+    backoff_seconds: float = 2.0,
+    dataset_label: str = "dataset",
+):
     if not url:
         return []
 
-    resp = requests.get(url, timeout=timeout)
-    resp.raise_for_status()
+    max_attempts = max(1, int(retries) + 1)
+    last_exc = None
 
-    rows = []
-    with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-        for name in zf.namelist():
-            lower = name.lower()
-            if not (lower.endswith(".csv") or lower.endswith(".txt")):
-                continue
-            raw = zf.read(name)
-            text_data = ""
-            for enc in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
-                try:
-                    text_data = raw.decode(enc)
-                    break
-                except Exception:
-                    continue
-            if not text_data:
-                continue
-            rows.extend(_parse_text_dataset(text_data))
-    return rows
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = requests.get(url, timeout=timeout)
+            resp.raise_for_status()
+
+            rows = []
+            with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+                for name in zf.namelist():
+                    lower = name.lower()
+                    if not (lower.endswith(".csv") or lower.endswith(".txt")):
+                        continue
+                    raw = zf.read(name)
+                    text_data = ""
+                    for enc in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
+                        try:
+                            text_data = raw.decode(enc)
+                            break
+                        except Exception:
+                            continue
+                    if not text_data:
+                        continue
+                    rows.extend(_parse_text_dataset(text_data))
+
+            return rows
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= max_attempts:
+                break
+
+            wait_seconds = float(backoff_seconds) * (2 ** (attempt - 1))
+            logger.warning(
+                "Dataset '%s' download failed at attempt %s/%s: %s. Retrying in %.1fs",
+                dataset_label,
+                attempt,
+                max_attempts,
+                exc,
+                wait_seconds,
+            )
+            time.sleep(wait_seconds)
+
+    raise last_exc
 
 
 def normalize_direcciones_rows(rows):

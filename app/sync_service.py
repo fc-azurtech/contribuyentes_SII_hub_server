@@ -1,4 +1,5 @@
 import logging
+import time
 from collections import defaultdict
 from datetime import datetime
 
@@ -14,7 +15,7 @@ from .models import (
     TaxpayerActivity,
 )
 from .security import clean_rut, format_rut
-from .sii_sources import fetch_zip_rows
+from .sii_sources import AuthenticatedSIIEmailClient, fetch_zip_rows
 
 
 logger = logging.getLogger(__name__)
@@ -254,11 +255,20 @@ class SyncService:
                         continue
                     taxpayer.rut_formatted = info.get("rut_formatted") or format_rut(rut_clean)
                     taxpayer.legal_name = legal_name or taxpayer.legal_name
-                    taxpayer.dte_email = info.get("dte_email", taxpayer.dte_email)
-                    taxpayer.address = info.get("address", taxpayer.address)
-                    taxpayer.city = info.get("city", taxpayer.city)
-                    taxpayer.parish = info.get("parish", taxpayer.parish)
-                    taxpayer.source = "sii_weekly"
+                    incoming_email = (info.get("dte_email") or "").strip()
+                    if incoming_email:
+                        taxpayer.dte_email = incoming_email
+                    incoming_address = (info.get("address") or "").strip()
+                    incoming_city = (info.get("city") or "").strip()
+                    incoming_parish = (info.get("parish") or "").strip()
+                    if incoming_address:
+                        taxpayer.address = incoming_address
+                    if incoming_city:
+                        taxpayer.city = incoming_city
+                    if incoming_parish:
+                        taxpayer.parish = incoming_parish
+                    if incoming_email or incoming_address or incoming_city or incoming_parish or legal_name:
+                        taxpayer.source = "sii_weekly"
                     taxpayer.updated_at = datetime.utcnow()
                     updated += 1
 
@@ -323,3 +333,115 @@ class SyncService:
             )
             logger.exception("sync_run=%s status=error message=%s", run.id, exc)
             raise
+
+    def run_authenticated_email_enrichment(self, session):
+        started = datetime.utcnow()
+        run = SyncRun(
+            started_at=started,
+            status="running",
+            stage="auth_email",
+            message="Starting authenticated SII DTE email enrichment",
+            total_rows=0,
+            processed_rows=0,
+            progress_percent=0,
+        )
+        session.add(run)
+        session.flush()
+        session.commit()
+        logger.info("sync_run=%s stage=%s message=%s", run.id, run.stage, run.message)
+
+        updated = 0
+        fetched_with_email = 0
+        fetched_without_email = 0
+        errors = 0
+        client = None
+
+        try:
+            cfg = self.settings_getter(session)
+            enabled = (cfg.get("sii_auth_enabled") or "false").strip().lower() in {"1", "true", "yes", "on"}
+            if not enabled:
+                raise RuntimeError("Authenticated SII source is disabled in settings")
+
+            timeout = int(cfg.get("sii_auth_timeout") or 30)
+            retries = int(cfg.get("sii_auth_retries") or 2)
+            backoff = float(cfg.get("sii_auth_backoff_seconds") or 2)
+            delay_ms = int(cfg.get("sii_auth_delay_ms") or 250)
+            batch_size = max(1, int(cfg.get("sii_auth_batch_size") or 250))
+
+            client = AuthenticatedSIIEmailClient(
+                query_url=cfg.get("sii_auth_query_url", ""),
+                cert_mode=cfg.get("sii_auth_cert_mode", "pfx"),
+                cert_path=cfg.get("sii_auth_cert_path", ""),
+                key_path=cfg.get("sii_auth_key_path", ""),
+                pfx_path=cfg.get("sii_auth_pfx_path", ""),
+                pfx_password=cfg.get("sii_auth_pfx_password", ""),
+                timeout=timeout,
+                retries=retries,
+                backoff_seconds=backoff,
+            )
+
+            taxpayers = session.scalars(
+                select(Taxpayer).where(Taxpayer.is_override.is_(False)).order_by(Taxpayer.id)
+            ).all()
+            run.total_rows = len(taxpayers)
+            run.message = f"Enriching DTE emails for {run.total_rows} taxpayers"
+            session.commit()
+
+            for idx, taxpayer in enumerate(taxpayers, start=1):
+                try:
+                    fetched_email = (client.fetch_email_for_rut(taxpayer.rut_clean) or "").strip()
+                    if fetched_email:
+                        fetched_with_email += 1
+                        if (taxpayer.dte_email or "").strip() != fetched_email:
+                            taxpayer.dte_email = fetched_email
+                            taxpayer.updated_at = datetime.utcnow()
+                            updated += 1
+                    else:
+                        fetched_without_email += 1
+                except Exception:
+                    errors += 1
+
+                run.processed_rows = idx
+                if run.total_rows:
+                    run.progress_percent = int((idx * 100) / run.total_rows)
+
+                if idx % batch_size == 0:
+                    run.message = (
+                        f"Auth email enrichment: {idx}/{run.total_rows} "
+                        f"with_email={fetched_with_email} no_email={fetched_without_email} errors={errors}"
+                    )
+                    run.updated_count = updated
+                    session.commit()
+
+                if delay_ms > 0:
+                    time.sleep(delay_ms / 1000.0)
+
+            run.finished_at = datetime.utcnow()
+            run.status = "ok"
+            run.stage = "finished"
+            run.progress_percent = 100
+            run.updated_count = updated
+            run.inserted_count = 0
+            run.message = (
+                f"Auth email enrichment finished total={run.total_rows} "
+                f"with_email={fetched_with_email} no_email={fetched_without_email} errors={errors}"
+            )
+            session.commit()
+            return run
+        except Exception as exc:
+            run.finished_at = datetime.utcnow()
+            run.status = "error"
+            run.stage = "error"
+            run.updated_count = updated
+            run.inserted_count = 0
+            run.message = str(exc)
+            session.commit()
+            self.notifier.send_failure_email(
+                "Taxpayer Hub authenticated enrichment failure",
+                f"Authenticated DTE email enrichment failed at {datetime.utcnow().isoformat()}\n\nError: {exc}",
+            )
+            logger.exception("sync_run=%s status=error message=%s", run.id, exc)
+            raise
+        finally:
+            if client is not None:
+                client.close()

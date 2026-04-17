@@ -21,6 +21,49 @@
         <label>Backoff entre reintentos (segundos)</label>
         <input name="sync_download_backoff_seconds" value="{{ cfg.sync_download_backoff_seconds }}" />
 
+        <h3>Fuente autenticada SII (email DTE)</h3>
+
+        <label>
+            <input type="checkbox" name="sii_auth_enabled" value="1" {% if cfg.sii_auth_enabled == 'true' %}checked{% endif %} />
+            Habilitar enriquecimiento autenticado de email DTE
+        </label>
+
+        <label>Modo certificado</label>
+        <select name="sii_auth_cert_mode">
+            <option value="pfx" {% if cfg.sii_auth_cert_mode == 'pfx' %}selected{% endif %}>PFX/P12</option>
+            <option value="pem" {% if cfg.sii_auth_cert_mode == 'pem' %}selected{% endif %}>PEM + KEY</option>
+        </select>
+
+        <label>Ruta archivo PFX/P12</label>
+        <input name="sii_auth_pfx_path" value="{{ cfg.sii_auth_pfx_path }}" placeholder="/opt/keys/sii_cert.p12" />
+
+        <label>Clave PFX/P12 (dejar vacía para mantener la actual)</label>
+        <input type="password" name="sii_auth_pfx_password" value="" placeholder="********" />
+
+        <label>Ruta certificado PEM (modo PEM)</label>
+        <input name="sii_auth_cert_path" value="{{ cfg.sii_auth_cert_path }}" placeholder="/opt/keys/sii_cert.pem" />
+
+        <label>Ruta llave KEY (modo PEM)</label>
+        <input name="sii_auth_key_path" value="{{ cfg.sii_auth_key_path }}" placeholder="/opt/keys/sii_key.pem" />
+
+        <label>URL consulta autenticada SII</label>
+        <input name="sii_auth_query_url" value="{{ cfg.sii_auth_query_url }}" />
+
+        <label>Timeout consulta autenticada (segundos)</label>
+        <input name="sii_auth_timeout" value="{{ cfg.sii_auth_timeout }}" />
+
+        <label>Reintentos consulta autenticada</label>
+        <input name="sii_auth_retries" value="{{ cfg.sii_auth_retries }}" />
+
+        <label>Backoff consulta autenticada (segundos)</label>
+        <input name="sii_auth_backoff_seconds" value="{{ cfg.sii_auth_backoff_seconds }}" />
+
+        <label>Espera entre RUTs (milisegundos)</label>
+        <input name="sii_auth_delay_ms" value="{{ cfg.sii_auth_delay_ms }}" />
+
+        <label>Tamaño de lote para commit</label>
+        <input name="sii_auth_batch_size" value="{{ cfg.sii_auth_batch_size }}" />
+
         <button type="submit">Guardar</button>
     </form>
 </div>

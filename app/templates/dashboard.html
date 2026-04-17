@@ -8,6 +8,9 @@
         <form method="post" action="/admin/sync/force" class="inline-form">
             <button id="forceSyncBtn" type="submit">Forzar actualización ahora</button>
         </form>
+        <form method="post" action="/admin/sync/enrich-dte-emails" class="inline-form">
+            <button id="authEmailBtn" type="submit">Enriquecer email DTE autenticado</button>
+        </form>
     </div>
 </div>
 
@@ -83,6 +86,7 @@
             const data = await response.json();
             const run = data.run;
             const btn = document.getElementById('forceSyncBtn');
+            const authBtn = document.getElementById('authEmailBtn');
             const stage = document.getElementById('syncStage');
             const bar = document.getElementById('syncBar');
             const message = document.getElementById('syncMessage');
@@ -96,6 +100,7 @@
                 counters.textContent = '';
                 elapsed.textContent = '';
                 btn.disabled = false;
+                authBtn.disabled = false;
                 return;
             }
 
@@ -112,6 +117,7 @@
                 ' | Tiempo transcurrido: ' + formatDuration(run.elapsed_seconds || 0);
 
             btn.disabled = !!data.running;
+            authBtn.disabled = !!data.running;
         } catch (err) {
             // Silent: status endpoint is best-effort for UI progress.
         }

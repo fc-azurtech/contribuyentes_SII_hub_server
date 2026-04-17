@@ -48,5 +48,18 @@ class Settings:
     sync_download_retries: int = int(os.getenv("SYNC_DOWNLOAD_RETRIES", "3"))
     sync_download_backoff_seconds: int = int(os.getenv("SYNC_DOWNLOAD_BACKOFF_SECONDS", "3"))
 
+    sii_auth_enabled: bool = os.getenv("SII_AUTH_ENABLED", "false").lower() in {"1", "true", "yes"}
+    sii_auth_cert_mode: str = os.getenv("SII_AUTH_CERT_MODE", "pfx")
+    sii_auth_pfx_path: str = os.getenv("SII_AUTH_PFX_PATH", "")
+    sii_auth_pfx_password: str = os.getenv("SII_AUTH_PFX_PASSWORD", "")
+    sii_auth_cert_path: str = os.getenv("SII_AUTH_CERT_PATH", "")
+    sii_auth_key_path: str = os.getenv("SII_AUTH_KEY_PATH", "")
+    sii_auth_query_url: str = os.getenv("SII_AUTH_QUERY_URL", "https://palena.sii.cl/cvc_cgi/dte/ce_consulta_rut")
+    sii_auth_timeout: int = int(os.getenv("SII_AUTH_TIMEOUT", "30"))
+    sii_auth_retries: int = int(os.getenv("SII_AUTH_RETRIES", "2"))
+    sii_auth_backoff_seconds: int = int(os.getenv("SII_AUTH_BACKOFF_SECONDS", "2"))
+    sii_auth_delay_ms: int = int(os.getenv("SII_AUTH_DELAY_MS", "250"))
+    sii_auth_batch_size: int = int(os.getenv("SII_AUTH_BATCH_SIZE", "250"))
+
 
 settings = Settings()

@@ -28,6 +28,7 @@ templates.env.globals["app_name"] = settings.app_name
 
 scheduler = AsyncIOScheduler()
 sync_lock = threading.Lock()
+auth_email_lock = threading.Lock()
 logger = logging.getLogger(__name__)
 
 
@@ -38,6 +39,18 @@ DEFAULT_SETTING_KEYS = {
     "sync_download_timeout": str(settings.sync_download_timeout),
     "sync_download_retries": str(settings.sync_download_retries),
     "sync_download_backoff_seconds": str(settings.sync_download_backoff_seconds),
+    "sii_auth_enabled": "true" if settings.sii_auth_enabled else "false",
+    "sii_auth_cert_mode": settings.sii_auth_cert_mode,
+    "sii_auth_pfx_path": settings.sii_auth_pfx_path,
+    "sii_auth_pfx_password": settings.sii_auth_pfx_password,
+    "sii_auth_cert_path": settings.sii_auth_cert_path,
+    "sii_auth_key_path": settings.sii_auth_key_path,
+    "sii_auth_query_url": settings.sii_auth_query_url,
+    "sii_auth_timeout": str(settings.sii_auth_timeout),
+    "sii_auth_retries": str(settings.sii_auth_retries),
+    "sii_auth_backoff_seconds": str(settings.sii_auth_backoff_seconds),
+    "sii_auth_delay_ms": str(settings.sii_auth_delay_ms),
+    "sii_auth_batch_size": str(settings.sii_auth_batch_size),
     "smtp_host": settings.smtp_host,
     "smtp_port": str(settings.smtp_port),
     "smtp_username": settings.smtp_username,
@@ -346,6 +359,17 @@ def _run_forced_sync_in_background():
             sync_lock.release()
 
 
+def _run_auth_enrichment_in_background():
+    with SessionLocal() as session:
+        try:
+            sync_service = get_sync_service(session)
+            sync_service.run_authenticated_email_enrichment(session)
+        except Exception:
+            logger.exception("Authenticated email enrichment finished with error")
+        finally:
+            auth_email_lock.release()
+
+
 @app.post("/admin/sync/force")
 def admin_force_sync(request: Request, db: Session = Depends(get_db)):
     require_admin(request)
@@ -357,6 +381,21 @@ def admin_force_sync(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse(url="/admin", status_code=303)
 
     worker = threading.Thread(target=_run_forced_sync_in_background, daemon=True)
+    worker.start()
+    return RedirectResponse(url="/admin", status_code=303)
+
+
+@app.post("/admin/sync/enrich-dte-emails")
+def admin_enrich_dte_emails(request: Request, db: Session = Depends(get_db)):
+    require_admin(request)
+    running = db.scalar(select(SyncRun).where(SyncRun.status == "running").order_by(desc(SyncRun.started_at)))
+    if running:
+        return RedirectResponse(url="/admin", status_code=303)
+
+    if not auth_email_lock.acquire(blocking=False):
+        return RedirectResponse(url="/admin", status_code=303)
+
+    worker = threading.Thread(target=_run_auth_enrichment_in_background, daemon=True)
     worker.start()
     return RedirectResponse(url="/admin", status_code=303)
 
@@ -606,6 +645,18 @@ def settings_sources_save(
     sync_download_timeout: str = Form(default="180"),
     sync_download_retries: str = Form(default="3"),
     sync_download_backoff_seconds: str = Form(default="3"),
+    sii_auth_enabled: str = Form(default="0"),
+    sii_auth_cert_mode: str = Form(default="pfx"),
+    sii_auth_pfx_path: str = Form(default=""),
+    sii_auth_pfx_password: str = Form(default=""),
+    sii_auth_cert_path: str = Form(default=""),
+    sii_auth_key_path: str = Form(default=""),
+    sii_auth_query_url: str = Form(default=""),
+    sii_auth_timeout: str = Form(default="30"),
+    sii_auth_retries: str = Form(default="2"),
+    sii_auth_backoff_seconds: str = Form(default="2"),
+    sii_auth_delay_ms: str = Form(default="250"),
+    sii_auth_batch_size: str = Form(default="250"),
     db: Session = Depends(get_db),
 ):
     require_admin(request)
@@ -615,6 +666,19 @@ def settings_sources_save(
     set_setting(db, "sync_download_timeout", sync_download_timeout)
     set_setting(db, "sync_download_retries", sync_download_retries)
     set_setting(db, "sync_download_backoff_seconds", sync_download_backoff_seconds)
+    set_setting(db, "sii_auth_enabled", "true" if sii_auth_enabled in {"1", "true", "yes", "on"} else "false")
+    set_setting(db, "sii_auth_cert_mode", sii_auth_cert_mode)
+    set_setting(db, "sii_auth_pfx_path", sii_auth_pfx_path)
+    if (sii_auth_pfx_password or "").strip():
+        set_setting(db, "sii_auth_pfx_password", sii_auth_pfx_password)
+    set_setting(db, "sii_auth_cert_path", sii_auth_cert_path)
+    set_setting(db, "sii_auth_key_path", sii_auth_key_path)
+    set_setting(db, "sii_auth_query_url", sii_auth_query_url)
+    set_setting(db, "sii_auth_timeout", sii_auth_timeout)
+    set_setting(db, "sii_auth_retries", sii_auth_retries)
+    set_setting(db, "sii_auth_backoff_seconds", sii_auth_backoff_seconds)
+    set_setting(db, "sii_auth_delay_ms", sii_auth_delay_ms)
+    set_setting(db, "sii_auth_batch_size", sii_auth_batch_size)
     db.commit()
     return RedirectResponse(url="/admin/settings/sources", status_code=303)
 

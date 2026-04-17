@@ -389,6 +389,7 @@ def admin_sync_status(request: Request, db: Session = Depends(get_db)):
             "updated_count": run.updated_count,
             "started_at": run.started_at.isoformat() if run.started_at else "",
             "finished_at": run.finished_at.isoformat() if run.finished_at else "",
+            "elapsed_seconds": int((datetime.utcnow() - run.started_at).total_seconds()) if run.started_at else 0,
         },
     }
     return JSONResponse(
@@ -464,9 +465,86 @@ def settings_api_clients_toggle(request: Request, client_id: int, db: Session = 
     return RedirectResponse(url="/admin/settings/api-clients", status_code=303)
 
 
-@app.get("/admin/taxpayers")
-def admin_taxpayers(request: Request, q: str = "", db: Session = Depends(get_db)):
+def _render_admin_users(request: Request, db: Session, message: str = "", error: str = ""):
+    users = db.scalars(select(AdminUser).order_by(AdminUser.username)).all()
+    return templates.TemplateResponse(
+        "users.html",
+        {
+            "request": request,
+            "users": users,
+            "message": message,
+            "error": error,
+            "current_admin_user_id": request.session.get("admin_user_id"),
+        },
+    )
+
+
+@app.get("/admin/settings/users")
+def settings_admin_users(request: Request, db: Session = Depends(get_db)):
     require_admin(request)
+    return _render_admin_users(request, db)
+
+
+@app.post("/admin/settings/users/create")
+def settings_admin_users_create(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+    username = (username or "").strip()
+    password = (password or "").strip()
+    if not username or not password:
+        return _render_admin_users(request, db, error="Usuario y clave son obligatorios.")
+
+    existing = db.scalar(select(AdminUser).where(AdminUser.username == username))
+    if existing is not None:
+        return _render_admin_users(request, db, error="El usuario ya existe.")
+
+    db.add(AdminUser(username=username, password_hash=hash_password(password), is_active=True))
+    db.commit()
+    return _render_admin_users(request, db, message="Usuario creado correctamente.")
+
+
+@app.post("/admin/settings/users/toggle/{user_id}")
+def settings_admin_users_toggle(request: Request, user_id: int, db: Session = Depends(get_db)):
+    require_admin(request)
+    row = db.get(AdminUser, user_id)
+    if row is None:
+        return RedirectResponse(url="/admin/settings/users", status_code=303)
+
+    current_admin_id = request.session.get("admin_user_id")
+    if current_admin_id == row.id and row.is_active:
+        return _render_admin_users(request, db, error="No puedes desactivar tu propio usuario en sesión.")
+
+    row.is_active = not row.is_active
+    db.commit()
+    return RedirectResponse(url="/admin/settings/users", status_code=303)
+
+
+@app.post("/admin/settings/users/reset-password/{user_id}")
+def settings_admin_users_reset_password(
+    request: Request,
+    user_id: int,
+    new_password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+    row = db.get(AdminUser, user_id)
+    if row is None:
+        return RedirectResponse(url="/admin/settings/users", status_code=303)
+
+    new_password = (new_password or "").strip()
+    if not new_password:
+        return _render_admin_users(request, db, error="La nueva clave no puede estar vacía.")
+
+    row.password_hash = hash_password(new_password)
+    db.commit()
+    return _render_admin_users(request, db, message=f"Clave actualizada para {row.username}.")
+
+
+def _get_taxpayer_rows(db: Session, q: str = ""):
     query = select(Taxpayer).order_by(desc(Taxpayer.updated_at)).limit(200)
     if q:
         key = f"%{q.lower()}%"
@@ -480,8 +558,36 @@ def admin_taxpayers(request: Request, q: str = "", db: Session = Depends(get_db)
             .order_by(desc(Taxpayer.updated_at))
             .limit(200)
         )
-    rows = db.scalars(query).all()
+    return db.scalars(query).all()
+
+
+@app.get("/admin/taxpayers")
+def admin_taxpayers(request: Request, q: str = "", db: Session = Depends(get_db)):
+    require_admin(request)
+    rows = _get_taxpayer_rows(db, q)
     return templates.TemplateResponse("taxpayers.html", {"request": request, "rows": rows, "q": q})
+
+
+@app.get("/admin/taxpayers/search")
+def admin_taxpayers_search(request: Request, q: str = "", db: Session = Depends(get_db)):
+    require_admin(request)
+    rows = _get_taxpayer_rows(db, q)
+    payload = []
+    for row in rows:
+        payload.append(
+            {
+                "rut_formatted": row.rut_formatted,
+                "legal_name": row.legal_name,
+                "dte_email": row.dte_email,
+                "address": row.address,
+                "parish": row.parish,
+                "city": row.city,
+                "source": row.source,
+                "is_override": row.is_override,
+                "updated_at": row.updated_at.isoformat(sep=" ", timespec="seconds") if row.updated_at else "",
+            }
+        )
+    return JSONResponse(content={"rows": payload})
 
 
 @app.get("/admin/settings/sources")

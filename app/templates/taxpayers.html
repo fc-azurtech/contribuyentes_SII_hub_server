@@ -2,22 +2,23 @@
 {% block content %}
 <div class="card">
     <h2>Consulta de contribuyentes</h2>
-    <form method="get">
+    <form method="get" id="taxpayerSearchForm">
         <label>Buscar por RUT o razón social</label>
-        <input name="q" value="{{ q }}" />
-        <button type="submit">Buscar</button>
+        <input id="taxpayerSearchInput" name="q" value="{{ q }}" autocomplete="off" />
+        <div class="muted">La búsqueda se actualiza automáticamente mientras escribes. Sin presionar Buscar.</div>
     </form>
 </div>
 
 <div class="card" style="margin-top:16px;">
+    <div class="table-wrap">
     <table>
         <thead>
             <tr><th>RUT</th><th>Razón social</th><th>Email DTE</th><th>Dirección</th><th>Comuna</th><th>Ciudad</th><th>Fuente</th><th>Override</th><th>Actualizado</th></tr>
         </thead>
-        <tbody>
+        <tbody id="taxpayerRows">
         {% for row in rows %}
             <tr>
-                <td>{{ row.rut_formatted }}</td>
+                <td class="rut-cell">{{ row.rut_formatted }}</td>
                 <td>{{ row.legal_name }}</td>
                 <td>{{ row.dte_email }}</td>
                 <td>{{ row.address }}</td>
@@ -30,5 +31,69 @@
         {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
+
+<script>
+    const searchInput = document.getElementById('taxpayerSearchInput');
+    const rowsContainer = document.getElementById('taxpayerRows');
+    let timer = null;
+
+    function escapeHtml(text) {
+        return (text || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function renderRows(rows) {
+        if (!rows.length) {
+            rowsContainer.innerHTML = '<tr><td colspan="9" class="muted">Sin resultados</td></tr>';
+            return;
+        }
+
+        rowsContainer.innerHTML = rows.map((row) => {
+            return '<tr>' +
+                '<td class="rut-cell">' + escapeHtml(row.rut_formatted) + '</td>' +
+                '<td>' + escapeHtml(row.legal_name) + '</td>' +
+                '<td>' + escapeHtml(row.dte_email) + '</td>' +
+                '<td>' + escapeHtml(row.address) + '</td>' +
+                '<td>' + escapeHtml(row.parish) + '</td>' +
+                '<td>' + escapeHtml(row.city) + '</td>' +
+                '<td>' + escapeHtml(row.source) + '</td>' +
+                '<td>' + (row.is_override ? 'Si' : 'No') + '</td>' +
+                '<td>' + escapeHtml(row.updated_at) + '</td>' +
+            '</tr>';
+        }).join('');
+    }
+
+    async function liveSearch() {
+        const q = searchInput.value || '';
+        const url = '/admin/taxpayers/search?q=' + encodeURIComponent(q) + '&t=' + Date.now();
+        const resp = await fetch(url, {
+            credentials: 'same-origin',
+            cache: 'no-store',
+            headers: {
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
+            },
+        });
+        if (!resp.ok) {
+            return;
+        }
+        const data = await resp.json();
+        renderRows(data.rows || []);
+    }
+
+    searchInput.addEventListener('input', function () {
+        if (timer) {
+            clearTimeout(timer);
+        }
+        timer = setTimeout(() => {
+            liveSearch().catch(() => {});
+        }, 250);
+    });
+</script>
 {% endblock %}

@@ -1,0 +1,63 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="card">
+    <h2>Mantenedor de usuarios</h2>
+    {% if message %}<p class="ok">{{ message }}</p>{% endif %}
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+    <h3>Crear usuario administrador</h3>
+    <form method="post" action="/admin/settings/users/create" class="grid-form">
+        <div>
+            <label>Usuario</label>
+            <input name="username" required />
+        </div>
+        <div>
+            <label>Clave</label>
+            <input name="password" type="password" required />
+        </div>
+        <div class="form-actions">
+            <button type="submit">Crear usuario</button>
+        </div>
+    </form>
+</div>
+
+<div class="card" style="margin-top:16px;">
+    <h3>Usuarios existentes</h3>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Usuario</th>
+                    <th>Estado</th>
+                    <th>Creado</th>
+                    <th>Acciones</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for user in users %}
+                <tr>
+                    <td>{{ user.id }}</td>
+                    <td>{{ user.username }}</td>
+                    <td>{{ 'Activo' if user.is_active else 'Inactivo' }}</td>
+                    <td>{{ user.created_at }}</td>
+                    <td>
+                        <div class="row-actions">
+                            <form method="post" action="/admin/settings/users/toggle/{{ user.id }}" class="inline-form">
+                                <button type="submit" class="secondary" {% if current_admin_user_id == user.id and user.is_active %}disabled{% endif %}>
+                                    {{ 'Desactivar' if user.is_active else 'Activar' }}
+                                </button>
+                            </form>
+                            <form method="post" action="/admin/settings/users/reset-password/{{ user.id }}" class="inline-form reset-pass-form">
+                                <input name="new_password" type="password" placeholder="Nueva clave" required />
+                                <button type="submit">Cambiar clave</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

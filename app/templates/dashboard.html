@@ -19,6 +19,7 @@
     </div>
     <div id="syncMessage" class="muted"></div>
     <div id="syncCounters" class="muted"></div>
+    <div id="syncElapsed" class="muted"></div>
 </div>
 
 <div class="card" style="margin-top:16px;">
@@ -43,6 +44,29 @@
 </div>
 
 <script>
+    function formatDuration(totalSeconds) {
+        const sec = Math.max(0, totalSeconds || 0);
+        const hours = Math.floor(sec / 3600);
+        const minutes = Math.floor((sec % 3600) / 60);
+        const seconds = sec % 60;
+        if (hours > 0) {
+            return hours + 'h ' + String(minutes).padStart(2, '0') + 'm ' + String(seconds).padStart(2, '0') + 's';
+        }
+        return minutes + 'm ' + String(seconds).padStart(2, '0') + 's';
+    }
+
+    function toChileDateTime(isoText) {
+        if (!isoText) {
+            return '-';
+        }
+        const dt = new Date(isoText);
+        return new Intl.DateTimeFormat('es-CL', {
+            dateStyle: 'short',
+            timeStyle: 'medium',
+            timeZone: 'America/Santiago',
+        }).format(dt);
+    }
+
     async function refreshSyncStatus() {
         try {
             const response = await fetch('/admin/sync/status?t=' + Date.now(), {
@@ -63,12 +87,14 @@
             const bar = document.getElementById('syncBar');
             const message = document.getElementById('syncMessage');
             const counters = document.getElementById('syncCounters');
+            const elapsed = document.getElementById('syncElapsed');
 
             if (!run) {
                 stage.textContent = 'Sin ejecuciones registradas';
                 bar.style.width = '0%';
                 message.textContent = '';
                 counters.textContent = '';
+                elapsed.textContent = '';
                 btn.disabled = false;
                 return;
             }
@@ -80,6 +106,11 @@
                 'Procesados: ' + (run.processed_rows || 0) + '/' + (run.total_rows || 0) +
                 ' | Insertados: ' + (run.inserted_count || 0) +
                 ' | Actualizados: ' + (run.updated_count || 0);
+
+            elapsed.textContent =
+                'Inicio (Chile): ' + toChileDateTime(run.started_at) +
+                ' | Tiempo transcurrido: ' + formatDuration(run.elapsed_seconds || 0);
+
             btn.disabled = !!data.running;
         } catch (err) {
             // Silent: status endpoint is best-effort for UI progress.

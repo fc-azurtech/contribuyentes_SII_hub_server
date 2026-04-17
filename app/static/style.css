@@ -29,6 +29,14 @@ th, td { border-bottom: 1px solid #e5e7eb; padding: 8px; text-align: left; }
 .reset-pass-form { display: inline-flex; align-items: center; gap: 8px; }
 .reset-pass-form input { width: 190px; margin: 0; }
 .reset-pass-form button { margin: 0; width: auto; padding: 8px 10px; }
+.search-grid { display: grid; grid-template-columns: minmax(280px, 1fr) 180px 140px; gap: 10px 12px; align-items: end; }
+.search-actions button { margin: 0; }
+.pager-wrap { margin-top: 14px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; }
+.pager-summary { margin: 0; }
+.pager-links { display: flex; flex-wrap: wrap; gap: 6px; }
+.pager-btn { display: inline-block; min-width: 34px; text-align: center; padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 6px; text-decoration: none; color: #1e293b; background: #ffffff; }
+.pager-btn.active { background: #0b3d91; border-color: #0b3d91; color: #ffffff; }
+.pager-btn.disabled { pointer-events: none; opacity: 0.45; }
 
 @media (max-width: 900px) {
 	header { flex-direction: column; align-items: flex-start; }
@@ -38,4 +46,6 @@ th, td { border-bottom: 1px solid #e5e7eb; padding: 8px; text-align: left; }
 	.reset-pass-form { width: 100%; }
 	.reset-pass-form input { width: 100%; }
 	.reset-pass-form button { width: 100%; }
+	.search-grid { grid-template-columns: 1fr; }
+	.search-actions button { width: 100%; }
 }

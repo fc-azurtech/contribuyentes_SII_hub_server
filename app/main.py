@@ -2,6 +2,7 @@ import logging
 import secrets
 import threading
 from datetime import datetime
+from math import ceil
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -34,6 +35,8 @@ logger = logging.getLogger(__name__)
 
 SYNC_WEEKDAY_VALUES = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 SYNC_MONTH_VALUES = {str(i) for i in range(1, 13)}
+TAXPAYER_DEFAULT_PER_PAGE = 80
+TAXPAYER_MAX_PER_PAGE = 200
 
 
 DEFAULT_SETTING_KEYS = {
@@ -724,27 +727,90 @@ def settings_admin_users_reset_password(
     return _render_admin_users(request, db, message=f"Clave actualizada para {row.username}.")
 
 
-def _get_taxpayer_rows(db: Session, q: str = ""):
+def _normalize_taxpayer_pagination(page: int, per_page: int):
+    try:
+        normalized_page = int(page or 1)
+    except (TypeError, ValueError):
+        normalized_page = 1
+    normalized_page = max(1, normalized_page)
+
+    try:
+        normalized_per_page = int(per_page or TAXPAYER_DEFAULT_PER_PAGE)
+    except (TypeError, ValueError):
+        normalized_per_page = TAXPAYER_DEFAULT_PER_PAGE
+    normalized_per_page = max(10, min(TAXPAYER_MAX_PER_PAGE, normalized_per_page))
+    return normalized_page, normalized_per_page
+
+
+def _build_taxpayer_filter(q: str):
+    q = (q or "").strip()
+    if not q:
+        return q, None
+    key = f"%{q.lower()}%"
+    where_clause = (
+        func.lower(Taxpayer.rut_formatted).like(key)
+        | func.lower(Taxpayer.legal_name).like(key)
+        | func.lower(Taxpayer.rut_clean).like(key)
+    )
+    return q, where_clause
+
+
+def _build_page_window(current_page: int, total_pages: int, radius: int = 2):
+    if total_pages <= 1:
+        return [1]
+    start = max(1, current_page - radius)
+    end = min(total_pages, current_page + radius)
+    pages = list(range(start, end + 1))
+    if 1 not in pages:
+        pages.insert(0, 1)
+    if total_pages not in pages:
+        pages.append(total_pages)
+    return pages
+
+
+def _get_taxpayer_rows(db: Session, q: str = "", page: int = 1, per_page: int = TAXPAYER_DEFAULT_PER_PAGE):
+    page, per_page = _normalize_taxpayer_pagination(page, per_page)
+    q, where_clause = _build_taxpayer_filter(q)
+
+    count_stmt = select(func.count()).select_from(Taxpayer)
+    if where_clause is not None:
+        count_stmt = count_stmt.where(where_clause)
+    total_rows = int(db.scalar(count_stmt) or 0)
+
+    total_pages = max(1, int(ceil(total_rows / float(per_page))) if total_rows else 1)
+    page = min(page, total_pages)
+    offset = (page - 1) * per_page
+
     query = (
         select(Taxpayer)
         .options(selectinload(Taxpayer.activities).selectinload(TaxpayerActivity.activity))
         .order_by(desc(Taxpayer.updated_at))
-        .limit(200)
+        .offset(offset)
+        .limit(per_page)
     )
-    if q:
-        key = f"%{q.lower()}%"
-        query = (
-            select(Taxpayer)
-            .options(selectinload(Taxpayer.activities).selectinload(TaxpayerActivity.activity))
-            .where(
-                func.lower(Taxpayer.rut_formatted).like(key)
-                | func.lower(Taxpayer.legal_name).like(key)
-                | func.lower(Taxpayer.rut_clean).like(key)
-            )
-            .order_by(desc(Taxpayer.updated_at))
-            .limit(200)
-        )
-    return db.scalars(query).all()
+    if where_clause is not None:
+        query = query.where(where_clause)
+
+    rows = db.scalars(query).all()
+    first_item = (offset + 1) if total_rows else 0
+    last_item = min(offset + len(rows), total_rows)
+    page_window = _build_page_window(page, total_pages)
+
+    return {
+        "rows": rows,
+        "q": q,
+        "page": page,
+        "per_page": per_page,
+        "total_rows": total_rows,
+        "total_pages": total_pages,
+        "first_item": first_item,
+        "last_item": last_item,
+        "has_prev": page > 1,
+        "has_next": page < total_pages,
+        "prev_page": page - 1 if page > 1 else 1,
+        "next_page": page + 1 if page < total_pages else total_pages,
+        "page_window": page_window,
+    }
 
 
 def _serialize_actecos(row: Taxpayer) -> str:
@@ -764,16 +830,36 @@ def _serialize_actecos(row: Taxpayer) -> str:
 
 
 @app.get("/admin/taxpayers")
-def admin_taxpayers(request: Request, q: str = "", db: Session = Depends(get_db)):
+def admin_taxpayers(
+    request: Request,
+    q: str = "",
+    page: int = 1,
+    per_page: int = TAXPAYER_DEFAULT_PER_PAGE,
+    db: Session = Depends(get_db),
+):
     require_admin(request)
-    rows = _get_taxpayer_rows(db, q)
-    return templates.TemplateResponse("taxpayers.html", {"request": request, "rows": rows, "q": q})
+    result = _get_taxpayer_rows(db, q=q, page=page, per_page=per_page)
+    return templates.TemplateResponse(
+        "taxpayers.html",
+        {
+            "request": request,
+            **result,
+            "per_page_options": [40, 80, 120, 200],
+        },
+    )
 
 
 @app.get("/admin/taxpayers/search")
-def admin_taxpayers_search(request: Request, q: str = "", db: Session = Depends(get_db)):
+def admin_taxpayers_search(
+    request: Request,
+    q: str = "",
+    page: int = 1,
+    per_page: int = TAXPAYER_DEFAULT_PER_PAGE,
+    db: Session = Depends(get_db),
+):
     require_admin(request)
-    rows = _get_taxpayer_rows(db, q)
+    result = _get_taxpayer_rows(db, q=q, page=page, per_page=per_page)
+    rows = result["rows"]
     payload = []
     for row in rows:
         payload.append(
@@ -790,7 +876,23 @@ def admin_taxpayers_search(request: Request, q: str = "", db: Session = Depends(
                 "updated_at": row.updated_at.isoformat(sep=" ", timespec="seconds") if row.updated_at else "",
             }
         )
-    return JSONResponse(content={"rows": payload})
+    return JSONResponse(
+        content={
+            "rows": payload,
+            "q": result["q"],
+            "page": result["page"],
+            "per_page": result["per_page"],
+            "total_rows": result["total_rows"],
+            "total_pages": result["total_pages"],
+            "first_item": result["first_item"],
+            "last_item": result["last_item"],
+            "has_prev": result["has_prev"],
+            "has_next": result["has_next"],
+            "prev_page": result["prev_page"],
+            "next_page": result["next_page"],
+            "page_window": result["page_window"],
+        }
+    )
 
 
 @app.get("/admin/settings/sources")

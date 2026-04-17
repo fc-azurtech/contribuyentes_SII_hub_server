@@ -2,11 +2,24 @@
 {% block content %}
 <div class="card">
     <h2>Consulta de contribuyentes</h2>
-    <form method="get" id="taxpayerSearchForm">
-        <label>Buscar por RUT o razón social</label>
-        <input id="taxpayerSearchInput" name="q" value="{{ q }}" autocomplete="off" />
-        <div class="muted">La búsqueda se actualiza automáticamente mientras escribes. Sin presionar Buscar.</div>
+    <form method="get" id="taxpayerSearchForm" class="search-grid">
+        <div>
+            <label>Buscar por RUT o razón social</label>
+            <input id="taxpayerSearchInput" name="q" value="{{ q }}" autocomplete="off" />
+        </div>
+        <div>
+            <label>Filas por página</label>
+            <select name="per_page">
+                {% for option in per_page_options %}
+                    <option value="{{ option }}" {% if per_page == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="search-actions">
+            <button type="submit">Buscar</button>
+        </div>
     </form>
+    <div class="muted">Búsqueda manual con paginación. Usa Anterior/Siguiente o los números de página.</div>
 </div>
 
 <div class="card" style="margin-top:16px;">
@@ -36,72 +49,24 @@
                 <td>{{ row.updated_at }}</td>
             </tr>
         {% endfor %}
+        {% if not rows %}
+            <tr><td colspan="10" class="muted">Sin resultados para la búsqueda actual.</td></tr>
+        {% endif %}
         </tbody>
     </table>
     </div>
+
+    <div class="pager-wrap">
+        <div class="muted pager-summary">
+            Mostrando {{ first_item }}-{{ last_item }} de {{ total_rows }} resultado(s)
+        </div>
+        <div class="pager-links">
+            <a class="pager-btn {% if not has_prev %}disabled{% endif %}" href="/admin/taxpayers?q={{ q|urlencode }}&per_page={{ per_page }}&page={{ prev_page }}">Anterior</a>
+            {% for p in page_window %}
+                <a class="pager-btn {% if p == page %}active{% endif %}" href="/admin/taxpayers?q={{ q|urlencode }}&per_page={{ per_page }}&page={{ p }}">{{ p }}</a>
+            {% endfor %}
+            <a class="pager-btn {% if not has_next %}disabled{% endif %}" href="/admin/taxpayers?q={{ q|urlencode }}&per_page={{ per_page }}&page={{ next_page }}">Siguiente</a>
+        </div>
+    </div>
 </div>
-
-<script>
-    const searchInput = document.getElementById('taxpayerSearchInput');
-    const rowsContainer = document.getElementById('taxpayerRows');
-    let timer = null;
-
-    function escapeHtml(text) {
-        return (text || '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    function renderRows(rows) {
-        if (!rows.length) {
-            rowsContainer.innerHTML = '<tr><td colspan="10" class="muted">Sin resultados</td></tr>';
-            return;
-        }
-
-        rowsContainer.innerHTML = rows.map((row) => {
-            return '<tr>' +
-                '<td class="rut-cell">' + escapeHtml(row.rut_formatted) + '</td>' +
-                '<td>' + escapeHtml(row.legal_name) + '</td>' +
-                '<td>' + escapeHtml(row.actecos) + '</td>' +
-                '<td>' + escapeHtml(row.dte_email) + '</td>' +
-                '<td>' + escapeHtml(row.address) + '</td>' +
-                '<td>' + escapeHtml(row.parish) + '</td>' +
-                '<td>' + escapeHtml(row.city) + '</td>' +
-                '<td>' + escapeHtml(row.source) + '</td>' +
-                '<td>' + (row.is_override ? 'Si' : 'No') + '</td>' +
-                '<td>' + escapeHtml(row.updated_at) + '</td>' +
-            '</tr>';
-        }).join('');
-    }
-
-    async function liveSearch() {
-        const q = searchInput.value || '';
-        const url = '/admin/taxpayers/search?q=' + encodeURIComponent(q) + '&t=' + Date.now();
-        const resp = await fetch(url, {
-            credentials: 'same-origin',
-            cache: 'no-store',
-            headers: {
-                'Cache-Control': 'no-cache',
-                'Pragma': 'no-cache',
-            },
-        });
-        if (!resp.ok) {
-            return;
-        }
-        const data = await resp.json();
-        renderRows(data.rows || []);
-    }
-
-    searchInput.addEventListener('input', function () {
-        if (timer) {
-            clearTimeout(timer);
-        }
-        timer = setTimeout(() => {
-            liveSearch().catch(() => {});
-        }, 250);
-    });
-</script>
 {% endblock %}

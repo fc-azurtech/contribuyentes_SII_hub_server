@@ -20,6 +20,19 @@
         </div>
     </form>
     <div class="muted">Búsqueda manual con paginación. Usa Anterior/Siguiente o los números de página.</div>
+
+    <div class="pager-wrap" style="margin-top: 10px;">
+        <div class="muted pager-summary">
+            Mostrando {{ first_item }}-{{ last_item }} de {{ total_rows }} resultado(s)
+        </div>
+        <div class="pager-links">
+            <a class="pager-btn {% if not has_prev %}disabled{% endif %}" href="/admin/taxpayers?q={{ q|urlencode }}&per_page={{ per_page }}&page={{ prev_page }}">Anterior</a>
+            {% for p in page_window %}
+                <a class="pager-btn {% if p == page %}active{% endif %}" href="/admin/taxpayers?q={{ q|urlencode }}&per_page={{ per_page }}&page={{ p }}">{{ p }}</a>
+            {% endfor %}
+            <a class="pager-btn {% if not has_next %}disabled{% endif %}" href="/admin/taxpayers?q={{ q|urlencode }}&per_page={{ per_page }}&page={{ next_page }}">Siguiente</a>
+        </div>
+    </div>
 </div>
 
 <div class="card" style="margin-top:16px;">
@@ -56,17 +69,5 @@
     </table>
     </div>
 
-    <div class="pager-wrap">
-        <div class="muted pager-summary">
-            Mostrando {{ first_item }}-{{ last_item }} de {{ total_rows }} resultado(s)
-        </div>
-        <div class="pager-links">
-            <a class="pager-btn {% if not has_prev %}disabled{% endif %}" href="/admin/taxpayers?q={{ q|urlencode }}&per_page={{ per_page }}&page={{ prev_page }}">Anterior</a>
-            {% for p in page_window %}
-                <a class="pager-btn {% if p == page %}active{% endif %}" href="/admin/taxpayers?q={{ q|urlencode }}&per_page={{ per_page }}&page={{ p }}">{{ p }}</a>
-            {% endfor %}
-            <a class="pager-btn {% if not has_next %}disabled{% endif %}" href="/admin/taxpayers?q={{ q|urlencode }}&per_page={{ per_page }}&page={{ next_page }}">Siguiente</a>
-        </div>
-    </div>
 </div>
 {% endblock %}

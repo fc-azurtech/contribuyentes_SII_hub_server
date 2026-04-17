@@ -550,6 +550,11 @@ def admin_sync_status(request: Request, db: Session = Depends(get_db)):
             headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache"},
         )
 
+    elapsed_seconds = 0
+    if run.started_at:
+        end_time = run.finished_at or datetime.utcnow()
+        elapsed_seconds = int((end_time - run.started_at).total_seconds())
+
     payload = {
         "running": run.status == "running",
         "run": {
@@ -564,7 +569,7 @@ def admin_sync_status(request: Request, db: Session = Depends(get_db)):
             "updated_count": run.updated_count,
             "started_at": run.started_at.isoformat() if run.started_at else "",
             "finished_at": run.finished_at.isoformat() if run.finished_at else "",
-            "elapsed_seconds": int((datetime.utcnow() - run.started_at).total_seconds()) if run.started_at else 0,
+            "elapsed_seconds": elapsed_seconds,
         },
     }
     return JSONResponse(

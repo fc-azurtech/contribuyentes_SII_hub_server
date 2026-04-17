@@ -12,6 +12,13 @@ import zipfile
 
 import requests
 
+try:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.serialization import pkcs12
+except Exception:  # pragma: no cover - optional fallback when cryptography missing
+    serialization = None
+    pkcs12 = None
+
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +116,36 @@ def _build_cert_tuple(cert_mode: str, cert_path: str, key_path: str, pfx_path: s
     key_pem = os.path.join(temp_dir, "key.pem")
     password_arg = f"pass:{pfx_password or ''}"
 
+    def _extract_with_cryptography():
+        if not pkcs12 or not serialization:
+            return False, "cryptography.pkcs12 unavailable"
+        try:
+            with open(pfx_path, "rb") as pfx_fp:
+                pfx_bytes = pfx_fp.read()
+            private_key, certificate, additional_certificates = pkcs12.load_key_and_certificates(
+                pfx_bytes,
+                (pfx_password or "").encode("utf-8"),
+            )
+            if not private_key or not certificate:
+                return False, "PKCS12 missing private key or certificate"
+
+            with open(key_pem, "wb") as key_fp:
+                key_fp.write(
+                    private_key.private_bytes(
+                        encoding=serialization.Encoding.PEM,
+                        format=serialization.PrivateFormat.PKCS8,
+                        encryption_algorithm=serialization.NoEncryption(),
+                    )
+                )
+            with open(cert_pem, "wb") as cert_fp:
+                cert_fp.write(certificate.public_bytes(serialization.Encoding.PEM))
+                if additional_certificates:
+                    for extra_cert in additional_certificates:
+                        cert_fp.write(extra_cert.public_bytes(serialization.Encoding.PEM))
+            return True, ""
+        except Exception as exc:
+            return False, str(exc)
+
     cert_cmd = [
         "openssl",
         "pkcs12",
@@ -134,12 +171,47 @@ def _build_cert_tuple(cert_mode: str, cert_path: str, key_path: str, pfx_path: s
         password_arg,
     ]
 
+    def _run_openssl(cmd):
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            return True, ""
+        except FileNotFoundError as exc:
+            raise RuntimeError("OpenSSL binary not found in PATH") from exc
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or exc.stdout or "").strip()
+            return False, stderr
+
+    def _run_with_optional_legacy(cmd):
+        ok, err = _run_openssl(cmd)
+        if ok:
+            return True, err
+
+        legacy_cmd = list(cmd)
+        legacy_cmd.insert(2, "-legacy")
+        ok_legacy, err_legacy = _run_openssl(legacy_cmd)
+        if ok_legacy:
+            return True, ""
+        combined_error = "standard=%s | legacy=%s" % (err or "unknown", err_legacy or "unknown")
+        return False, combined_error
+
+    crypto_ok, crypto_err = _extract_with_cryptography()
+    if crypto_ok:
+        return (cert_pem, key_pem), temp_dir
+
     try:
-        subprocess.run(cert_cmd, check=True, capture_output=True, text=True)
-        subprocess.run(key_cmd, check=True, capture_output=True, text=True)
+        cert_ok, cert_err = _run_with_optional_legacy(cert_cmd)
+        if not cert_ok:
+            raise RuntimeError("certificate extraction failed: %s" % cert_err)
+
+        key_ok, key_err = _run_with_optional_legacy(key_cmd)
+        if not key_ok:
+            raise RuntimeError("private key extraction failed: %s" % key_err)
     except Exception as exc:
         shutil.rmtree(temp_dir, ignore_errors=True)
-        raise RuntimeError(f"Could not extract PFX certificate with openssl: {exc}") from exc
+        detail = str(exc)
+        if crypto_err:
+            detail = "cryptography=%s | openssl=%s" % (crypto_err, detail)
+        raise RuntimeError(f"Could not extract PFX certificate: {detail}") from exc
 
     return (cert_pem, key_pem), temp_dir
 

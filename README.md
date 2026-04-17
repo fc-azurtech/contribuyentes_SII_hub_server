@@ -127,3 +127,10 @@ Se siembra un cliente API inicial con:
 - `SEED_API_CLIENT_KEY`
 
 La API valida por hash SHA-256 de la key.
+
+Desde la interfaz web, en **API**, puedes:
+- crear clientes API
+- rotar claves
+- activar/desactivar clientes
+
+Nota: la clave en texto plano se muestra una sola vez al generarla/rotarla.

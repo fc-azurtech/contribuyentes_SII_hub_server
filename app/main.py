@@ -1,10 +1,11 @@
 import logging
+import secrets
 import threading
 from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import desc, func, select, text
@@ -365,12 +366,16 @@ def admin_sync_status(request: Request, db: Session = Depends(get_db)):
     require_admin(request)
     run = db.scalar(select(SyncRun).order_by(desc(SyncRun.started_at)).limit(1))
     if not run:
-        return {
+        payload = {
             "running": False,
             "run": None,
         }
+        return JSONResponse(
+            content=payload,
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache"},
+        )
 
-    return {
+    payload = {
         "running": run.status == "running",
         "run": {
             "id": run.id,
@@ -386,6 +391,77 @@ def admin_sync_status(request: Request, db: Session = Depends(get_db)):
             "finished_at": run.finished_at.isoformat() if run.finished_at else "",
         },
     }
+    return JSONResponse(
+        content=payload,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache"},
+    )
+
+
+def _render_api_clients(request: Request, db: Session, created_key: str = "", created_name: str = ""):
+    clients = db.scalars(select(ApiClient).order_by(ApiClient.name)).all()
+    return templates.TemplateResponse(
+        "api_clients.html",
+        {
+            "request": request,
+            "clients": clients,
+            "created_key": created_key,
+            "created_name": created_name,
+        },
+    )
+
+
+@app.get("/admin/settings/api-clients")
+def settings_api_clients(request: Request, db: Session = Depends(get_db)):
+    require_admin(request)
+    return _render_api_clients(request, db)
+
+
+@app.post("/admin/settings/api-clients/create")
+def settings_api_clients_create(
+    request: Request,
+    name: str = Form(...),
+    api_key: str = Form(default=""),
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+    name = (name or "").strip()
+    if not name:
+        return _render_api_clients(request, db)
+
+    plain = (api_key or "").strip() or secrets.token_urlsafe(32)
+    row = db.scalar(select(ApiClient).where(ApiClient.name == name))
+    if row is None:
+        row = ApiClient(name=name, key_hash=hash_api_key(plain), is_active=True)
+        db.add(row)
+    else:
+        row.key_hash = hash_api_key(plain)
+        row.is_active = True
+    db.commit()
+    return _render_api_clients(request, db, created_key=plain, created_name=name)
+
+
+@app.post("/admin/settings/api-clients/rotate/{client_id}")
+def settings_api_clients_rotate(request: Request, client_id: int, db: Session = Depends(get_db)):
+    require_admin(request)
+    row = db.get(ApiClient, client_id)
+    if row is None:
+        return RedirectResponse(url="/admin/settings/api-clients", status_code=303)
+
+    plain = secrets.token_urlsafe(32)
+    row.key_hash = hash_api_key(plain)
+    row.is_active = True
+    db.commit()
+    return _render_api_clients(request, db, created_key=plain, created_name=row.name)
+
+
+@app.post("/admin/settings/api-clients/toggle/{client_id}")
+def settings_api_clients_toggle(request: Request, client_id: int, db: Session = Depends(get_db)):
+    require_admin(request)
+    row = db.get(ApiClient, client_id)
+    if row is not None:
+        row.is_active = not row.is_active
+        db.commit()
+    return RedirectResponse(url="/admin/settings/api-clients", status_code=303)
 
 
 @app.get("/admin/taxpayers")

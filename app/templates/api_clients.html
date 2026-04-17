@@ -1,0 +1,55 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="card">
+    <h2>Clientes API</h2>
+    <p class="muted">Crea o rota claves para Odoo/tenants. La clave solo se muestra una vez al generarla.</p>
+
+    {% if created_key %}
+    <div class="card" style="border:1px solid #bfdbfe; margin-top:12px;">
+        <h3>Clave generada para {{ created_name }}</h3>
+        <p class="ok">Guarda esta clave ahora. No se puede recuperar después.</p>
+        <textarea readonly rows="3">{{ created_key }}</textarea>
+    </div>
+    {% endif %}
+
+    <div class="card" style="margin-top:12px;">
+        <h3>Crear/actualizar cliente</h3>
+        <form method="post" action="/admin/settings/api-clients/create">
+            <label>Nombre cliente</label>
+            <input name="name" placeholder="odoo-main" required />
+
+            <label>API key (opcional, si no se llena se genera automática)</label>
+            <input name="api_key" placeholder="dejar vacío para generar" />
+
+            <button type="submit">Guardar cliente y generar clave</button>
+        </form>
+    </div>
+</div>
+
+<div class="card" style="margin-top:16px;">
+    <h3>Clientes existentes</h3>
+    <table>
+        <thead>
+            <tr><th>ID</th><th>Nombre</th><th>Activo</th><th>Creado</th><th>Acciones</th></tr>
+        </thead>
+        <tbody>
+        {% for c in clients %}
+            <tr>
+                <td>{{ c.id }}</td>
+                <td>{{ c.name }}</td>
+                <td>{{ 'Si' if c.is_active else 'No' }}</td>
+                <td>{{ c.created_at }}</td>
+                <td>
+                    <form method="post" action="/admin/settings/api-clients/rotate/{{ c.id }}" class="inline-form">
+                        <button type="submit">Rotar clave</button>
+                    </form>
+                    <form method="post" action="/admin/settings/api-clients/toggle/{{ c.id }}" class="inline-form" style="margin-left:8px;">
+                        <button class="secondary" type="submit">{{ 'Desactivar' if c.is_active else 'Activar' }}</button>
+                    </form>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

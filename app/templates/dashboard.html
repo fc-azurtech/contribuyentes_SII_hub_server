@@ -45,7 +45,14 @@
 <script>
     async function refreshSyncStatus() {
         try {
-            const response = await fetch('/admin/sync/status', { credentials: 'same-origin' });
+            const response = await fetch('/admin/sync/status?t=' + Date.now(), {
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: {
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache'
+                }
+            });
             if (!response.ok) {
                 return;
             }

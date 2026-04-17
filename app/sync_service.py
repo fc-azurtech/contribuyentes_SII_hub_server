@@ -354,6 +354,7 @@ class SyncService:
         fetched_with_email = 0
         fetched_without_email = 0
         errors = 0
+        first_error = ""
         client = None
 
         try:
@@ -380,6 +381,13 @@ class SyncService:
                 backoff_seconds=backoff,
             )
 
+            # Validate the authenticated SII entrypoint once before iterating all taxpayers.
+            # If this fails, the whole run would otherwise count every record as an error.
+            try:
+                client._ensure_form()
+            except Exception as exc:
+                raise RuntimeError(f"Authenticated SII form bootstrap failed: {exc}") from exc
+
             taxpayers = session.scalars(
                 select(Taxpayer).where(Taxpayer.is_override.is_(False)).order_by(Taxpayer.id)
             ).all()
@@ -398,8 +406,14 @@ class SyncService:
                             updated += 1
                     else:
                         fetched_without_email += 1
-                except Exception:
+                except Exception as exc:
                     errors += 1
+                    if not first_error:
+                        first_error = str(exc)
+
+                    # Abort early when all processed rows fail with the same systemic problem.
+                    if idx >= min(batch_size, 100) and errors == idx and fetched_with_email == 0 and fetched_without_email == 0:
+                        raise RuntimeError(f"Authenticated SII lookup failing for every RUT. First error: {first_error}") from exc
 
                 run.processed_rows = idx
                 if run.total_rows:
@@ -410,6 +424,8 @@ class SyncService:
                         f"Auth email enrichment: {idx}/{run.total_rows} "
                         f"with_email={fetched_with_email} no_email={fetched_without_email} errors={errors}"
                     )
+                    if first_error:
+                        run.message += f" first_error={first_error[:220]}"
                     run.updated_count = updated
                     session.commit()
 
@@ -426,6 +442,8 @@ class SyncService:
                 f"Auth email enrichment finished total={run.total_rows} "
                 f"with_email={fetched_with_email} no_email={fetched_without_email} errors={errors}"
             )
+            if first_error:
+                run.message += f" first_error={first_error[:220]}"
             session.commit()
             return run
         except Exception as exc:

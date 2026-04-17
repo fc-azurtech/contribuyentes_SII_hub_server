@@ -2,6 +2,7 @@ import logging
 import secrets
 import threading
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request
@@ -9,12 +10,12 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import desc, func, select, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from starlette.middleware.sessions import SessionMiddleware
 
 from .config import settings
 from .db import Base, SessionLocal, engine
-from .models import AdminUser, ApiClient, SyncRun, SystemSetting, Taxpayer
+from .models import AdminUser, ApiClient, SyncRun, SystemSetting, Taxpayer, TaxpayerActivity
 from .notifications import NotificationService
 from .security import clean_rut, format_rut, hash_api_key, hash_password, verify_password
 from .sync_service import SyncService
@@ -31,6 +32,9 @@ sync_lock = threading.Lock()
 auth_email_lock = threading.Lock()
 logger = logging.getLogger(__name__)
 
+SYNC_WEEKDAY_VALUES = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
+SYNC_MONTH_VALUES = {str(i) for i in range(1, 13)}
+
 
 DEFAULT_SETTING_KEYS = {
     "sii_direcciones_url": settings.sii_direcciones_url,
@@ -39,6 +43,14 @@ DEFAULT_SETTING_KEYS = {
     "sync_download_timeout": str(settings.sync_download_timeout),
     "sync_download_retries": str(settings.sync_download_retries),
     "sync_download_backoff_seconds": str(settings.sync_download_backoff_seconds),
+    "sync_frequency": settings.sync_frequency,
+    "sync_weekdays": settings.sync_weekdays,
+    "sync_months": settings.sync_months,
+    "sync_day_of_month": str(settings.sync_day_of_month),
+    "sync_yearly_month": str(settings.sync_yearly_month),
+    "sync_hour": str(settings.sync_hour),
+    "sync_minute": str(settings.sync_minute),
+    "sync_timezone": settings.sync_timezone,
     "sii_auth_enabled": "true" if settings.sii_auth_enabled else "false",
     "sii_auth_cert_mode": settings.sii_auth_cert_mode,
     "sii_auth_pfx_path": settings.sii_auth_pfx_path,
@@ -59,6 +71,78 @@ DEFAULT_SETTING_KEYS = {
     "smtp_from": settings.smtp_from,
     "alert_email_to": settings.alert_email_to,
 }
+
+
+def _to_int(value, default, min_value, max_value):
+    try:
+        parsed = int(str(value).strip())
+    except Exception:
+        parsed = default
+    return max(min_value, min(max_value, parsed))
+
+
+def _sanitize_weekdays_csv(raw):
+    values = []
+    for item in (raw or "").split(","):
+        token = item.strip().lower()
+        if token in SYNC_WEEKDAY_VALUES and token not in values:
+            values.append(token)
+    return ",".join(values)
+
+
+def _sanitize_months_csv(raw):
+    values = []
+    for item in (raw or "").split(","):
+        token = item.strip()
+        if token in SYNC_MONTH_VALUES and token not in values:
+            values.append(token)
+    return ",".join(values)
+
+
+def _build_sync_cron_kwargs(cfg):
+    frequency = (cfg.get("sync_frequency") or "weekly").strip().lower()
+    if frequency not in {"daily", "weekly", "monthly", "yearly"}:
+        frequency = "weekly"
+
+    timezone_name = (cfg.get("sync_timezone") or "America/Santiago").strip() or "America/Santiago"
+    try:
+        timezone = ZoneInfo(timezone_name)
+    except Exception:
+        timezone = ZoneInfo("America/Santiago")
+
+    hour = _to_int(cfg.get("sync_hour"), 3, 0, 23)
+    minute = _to_int(cfg.get("sync_minute"), 30, 0, 59)
+    day_of_month = _to_int(cfg.get("sync_day_of_month"), 1, 1, 31)
+    yearly_month = _to_int(cfg.get("sync_yearly_month"), 1, 1, 12)
+    weekdays = _sanitize_weekdays_csv(cfg.get("sync_weekdays")) or "sun"
+    months = _sanitize_months_csv(cfg.get("sync_months"))
+
+    cron_kwargs = {
+        "hour": hour,
+        "minute": minute,
+        "timezone": timezone,
+    }
+    if frequency == "weekly":
+        cron_kwargs["day_of_week"] = weekdays
+    elif frequency == "monthly":
+        cron_kwargs["day"] = str(day_of_month)
+        if months:
+            cron_kwargs["month"] = months
+    elif frequency == "yearly":
+        cron_kwargs["day"] = str(day_of_month)
+        cron_kwargs["month"] = str(yearly_month)
+    return cron_kwargs
+
+
+def _apply_sync_schedule(cfg):
+    cron_kwargs = _build_sync_cron_kwargs(cfg)
+    scheduler.add_job(
+        _run_scheduled_sync,
+        "cron",
+        id="scheduled_sync",
+        replace_existing=True,
+        **cron_kwargs,
+    )
 
 
 def get_db():
@@ -180,15 +264,9 @@ async def startup_event():
         seed_defaults(session)
         session.commit()
 
-    scheduler.add_job(
-        _run_scheduled_sync,
-        "cron",
-        day_of_week=settings.sync_weekday,
-        hour=settings.sync_hour,
-        minute=settings.sync_minute,
-        id="weekly_sync",
-        replace_existing=True,
-    )
+    with SessionLocal() as session:
+        cfg = load_runtime_config(session)
+    _apply_sync_schedule(cfg)
     scheduler.start()
 
 
@@ -215,6 +293,44 @@ def health(db: Session = Depends(get_db)):
     return {"status": "ok", "taxpayers": total}
 
 
+def _serialize_actecos_list(row: Taxpayer):
+    items = []
+    for link in row.activities:
+        if not link.activity:
+            continue
+        code = (link.activity.code or "").strip()
+        name = (link.activity.name or "").strip()
+        if not (code or name):
+            continue
+        items.append({"code": code, "name": name})
+    return items
+
+
+def _build_taxpayer_payload(taxpayer: Taxpayer):
+    actecos = _serialize_actecos_list(taxpayer)
+    actecos_text = " | ".join(
+        [
+            f"{item['code']} - {item['name']}" if item.get("code") and item.get("name")
+            else (item.get("code") or item.get("name") or "")
+            for item in actecos
+        ]
+    )
+    return {
+        "rut": taxpayer.rut_formatted,
+        "razon_social": taxpayer.legal_name,
+        "name": taxpayer.legal_name,
+        "actecos": actecos,
+        "actecos_text": actecos_text,
+        "dte_email": taxpayer.dte_email,
+        "direccion": taxpayer.address,
+        "city": taxpayer.city,
+        "comuna": taxpayer.parish,
+        "source": taxpayer.source,
+        "is_override": taxpayer.is_override,
+        "updated_at": taxpayer.updated_at.isoformat() if taxpayer.updated_at else "",
+    }
+
+
 @app.get("/taxpayers/by-rut")
 def api_taxpayer_by_rut(
     rut: str = "",
@@ -228,24 +344,44 @@ def api_taxpayer_by_rut(
     if len(rut_clean) < 8:
         raise HTTPException(status_code=400, detail="Invalid RUT")
 
-    taxpayer = db.scalar(select(Taxpayer).where(Taxpayer.rut_clean == rut_clean))
+    taxpayer = db.scalar(
+        select(Taxpayer)
+        .options(selectinload(Taxpayer.activities).selectinload(TaxpayerActivity.activity))
+        .where(Taxpayer.rut_clean == rut_clean)
+    )
     if not taxpayer:
         raise HTTPException(status_code=404, detail="Taxpayer not found")
 
-    return {
-        "data": {
-            "rut": taxpayer.rut_formatted,
-            "razon_social": taxpayer.legal_name,
-            "name": taxpayer.legal_name,
-            "dte_email": taxpayer.dte_email,
-            "direccion": taxpayer.address,
-            "city": taxpayer.city,
-            "comuna": taxpayer.parish,
-            "source": taxpayer.source,
-            "is_override": taxpayer.is_override,
-            "updated_at": taxpayer.updated_at.isoformat() if taxpayer.updated_at else "",
-        }
-    }
+    return {"data": _build_taxpayer_payload(taxpayer)}
+
+
+@app.get("/taxpayers/search")
+def api_taxpayer_search(
+    q: str = "",
+    limit: int = 30,
+    x_api_key: str = Header(default="", alias="X-API-Key"),
+    db: Session = Depends(get_db),
+):
+    require_api_client(db, x_api_key)
+    q = (q or "").strip()
+    if len(q) < 2:
+        return {"rows": []}
+
+    limit = max(1, min(int(limit or 30), 100))
+    like = f"%{q.lower()}%"
+    rows = db.scalars(
+        select(Taxpayer)
+        .options(selectinload(Taxpayer.activities).selectinload(TaxpayerActivity.activity))
+        .where(
+            func.lower(Taxpayer.rut_formatted).like(like)
+            | func.lower(Taxpayer.rut_clean).like(like)
+            | func.lower(Taxpayer.legal_name).like(like)
+        )
+        .order_by(desc(Taxpayer.updated_at))
+        .limit(limit)
+    ).all()
+
+    return {"rows": [_build_taxpayer_payload(row) for row in rows]}
 
 
 @app.post("/taxpayers/override")
@@ -584,11 +720,17 @@ def settings_admin_users_reset_password(
 
 
 def _get_taxpayer_rows(db: Session, q: str = ""):
-    query = select(Taxpayer).order_by(desc(Taxpayer.updated_at)).limit(200)
+    query = (
+        select(Taxpayer)
+        .options(selectinload(Taxpayer.activities).selectinload(TaxpayerActivity.activity))
+        .order_by(desc(Taxpayer.updated_at))
+        .limit(200)
+    )
     if q:
         key = f"%{q.lower()}%"
         query = (
             select(Taxpayer)
+            .options(selectinload(Taxpayer.activities).selectinload(TaxpayerActivity.activity))
             .where(
                 func.lower(Taxpayer.rut_formatted).like(key)
                 | func.lower(Taxpayer.legal_name).like(key)
@@ -598,6 +740,22 @@ def _get_taxpayer_rows(db: Session, q: str = ""):
             .limit(200)
         )
     return db.scalars(query).all()
+
+
+def _serialize_actecos(row: Taxpayer) -> str:
+    labels = []
+    for link in row.activities:
+        if not link.activity:
+            continue
+        code = (link.activity.code or "").strip()
+        name = (link.activity.name or "").strip()
+        if code and name:
+            labels.append(f"{code} - {name}")
+        elif code:
+            labels.append(code)
+        elif name:
+            labels.append(name)
+    return " | ".join(labels)
 
 
 @app.get("/admin/taxpayers")
@@ -617,6 +775,7 @@ def admin_taxpayers_search(request: Request, q: str = "", db: Session = Depends(
             {
                 "rut_formatted": row.rut_formatted,
                 "legal_name": row.legal_name,
+                "actecos": _serialize_actecos(row),
                 "dte_email": row.dte_email,
                 "address": row.address,
                 "parish": row.parish,
@@ -633,7 +792,36 @@ def admin_taxpayers_search(request: Request, q: str = "", db: Session = Depends(
 def settings_sources_form(request: Request, db: Session = Depends(get_db)):
     require_admin(request)
     cfg = load_runtime_config(db)
-    return templates.TemplateResponse("sources.html", {"request": request, "cfg": cfg})
+    return templates.TemplateResponse(
+        "sources.html",
+        {
+            "request": request,
+            "cfg": cfg,
+            "weekday_options": [
+                ("mon", "Lunes"),
+                ("tue", "Martes"),
+                ("wed", "Miércoles"),
+                ("thu", "Jueves"),
+                ("fri", "Viernes"),
+                ("sat", "Sábado"),
+                ("sun", "Domingo"),
+            ],
+            "month_options": [
+                ("1", "Enero"),
+                ("2", "Febrero"),
+                ("3", "Marzo"),
+                ("4", "Abril"),
+                ("5", "Mayo"),
+                ("6", "Junio"),
+                ("7", "Julio"),
+                ("8", "Agosto"),
+                ("9", "Septiembre"),
+                ("10", "Octubre"),
+                ("11", "Noviembre"),
+                ("12", "Diciembre"),
+            ],
+        },
+    )
 
 
 @app.post("/admin/settings/sources")
@@ -645,6 +833,14 @@ def settings_sources_save(
     sync_download_timeout: str = Form(default="180"),
     sync_download_retries: str = Form(default="3"),
     sync_download_backoff_seconds: str = Form(default="3"),
+    sync_frequency: str = Form(default="weekly"),
+    sync_weekdays: list[str] = Form(default=[]),
+    sync_months: list[str] = Form(default=[]),
+    sync_day_of_month: str = Form(default="1"),
+    sync_yearly_month: str = Form(default="1"),
+    sync_yearly_day_of_month: str = Form(default="1"),
+    sync_hour: str = Form(default="3"),
+    sync_minute: str = Form(default="30"),
     sii_auth_enabled: str = Form(default="0"),
     sii_auth_cert_mode: str = Form(default="pfx"),
     sii_auth_pfx_path: str = Form(default=""),
@@ -666,6 +862,20 @@ def settings_sources_save(
     set_setting(db, "sync_download_timeout", sync_download_timeout)
     set_setting(db, "sync_download_retries", sync_download_retries)
     set_setting(db, "sync_download_backoff_seconds", sync_download_backoff_seconds)
+    normalized_frequency = (sync_frequency or "weekly").strip().lower()
+    if normalized_frequency not in {"daily", "weekly", "monthly", "yearly"}:
+        normalized_frequency = "weekly"
+    set_setting(db, "sync_frequency", normalized_frequency)
+    set_setting(db, "sync_weekdays", _sanitize_weekdays_csv(",".join(sync_weekdays or [])) or "sun")
+    set_setting(db, "sync_months", _sanitize_months_csv(",".join(sync_months or [])))
+    day_of_month_value = sync_day_of_month
+    if normalized_frequency == "yearly":
+        day_of_month_value = sync_yearly_day_of_month
+    set_setting(db, "sync_day_of_month", str(_to_int(day_of_month_value, 1, 1, 31)))
+    set_setting(db, "sync_yearly_month", str(_to_int(sync_yearly_month, 1, 1, 12)))
+    set_setting(db, "sync_hour", str(_to_int(sync_hour, 3, 0, 23)))
+    set_setting(db, "sync_minute", str(_to_int(sync_minute, 30, 0, 59)))
+    set_setting(db, "sync_timezone", "America/Santiago")
     set_setting(db, "sii_auth_enabled", "true" if sii_auth_enabled in {"1", "true", "yes", "on"} else "false")
     set_setting(db, "sii_auth_cert_mode", sii_auth_cert_mode)
     set_setting(db, "sii_auth_pfx_path", sii_auth_pfx_path)
@@ -680,6 +890,8 @@ def settings_sources_save(
     set_setting(db, "sii_auth_delay_ms", sii_auth_delay_ms)
     set_setting(db, "sii_auth_batch_size", sii_auth_batch_size)
     db.commit()
+    cfg = load_runtime_config(db)
+    _apply_sync_schedule(cfg)
     return RedirectResponse(url="/admin/settings/sources", status_code=303)
 
 

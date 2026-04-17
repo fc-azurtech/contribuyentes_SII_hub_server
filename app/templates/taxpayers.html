@@ -13,13 +13,20 @@
     <div class="table-wrap">
     <table>
         <thead>
-            <tr><th>RUT</th><th>Razón social</th><th>Email DTE</th><th>Dirección</th><th>Comuna</th><th>Ciudad</th><th>Fuente</th><th>Override</th><th>Actualizado</th></tr>
+            <tr><th>RUT</th><th>Razón social</th><th>ACTECO(s)</th><th>Email DTE</th><th>Dirección</th><th>Comuna</th><th>Ciudad</th><th>Fuente</th><th>Override</th><th>Actualizado</th></tr>
         </thead>
         <tbody id="taxpayerRows">
         {% for row in rows %}
             <tr>
                 <td class="rut-cell">{{ row.rut_formatted }}</td>
                 <td>{{ row.legal_name }}</td>
+                <td>
+                    {% for rel in row.activities %}
+                        {% if rel.activity %}
+                            {{ rel.activity.code }} - {{ rel.activity.name }}{% if not loop.last %} | {% endif %}
+                        {% endif %}
+                    {% endfor %}
+                </td>
                 <td>{{ row.dte_email }}</td>
                 <td>{{ row.address }}</td>
                 <td>{{ row.parish }}</td>
@@ -50,7 +57,7 @@
 
     function renderRows(rows) {
         if (!rows.length) {
-            rowsContainer.innerHTML = '<tr><td colspan="9" class="muted">Sin resultados</td></tr>';
+            rowsContainer.innerHTML = '<tr><td colspan="10" class="muted">Sin resultados</td></tr>';
             return;
         }
 
@@ -58,6 +65,7 @@
             return '<tr>' +
                 '<td class="rut-cell">' + escapeHtml(row.rut_formatted) + '</td>' +
                 '<td>' + escapeHtml(row.legal_name) + '</td>' +
+                '<td>' + escapeHtml(row.actecos) + '</td>' +
                 '<td>' + escapeHtml(row.dte_email) + '</td>' +
                 '<td>' + escapeHtml(row.address) + '</td>' +
                 '<td>' + escapeHtml(row.parish) + '</td>' +

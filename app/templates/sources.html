@@ -2,6 +2,8 @@
 {% block content %}
 <div class="card">
     <h2>Configuración de fuentes SII</h2>
+    {% set selected_weekdays = (cfg.sync_weekdays or '').split(',') %}
+    {% set selected_months = (cfg.sync_months or '').split(',') %}
     <form method="post">
         <label>URL Direcciones</label>
         <input name="sii_direcciones_url" value="{{ cfg.sii_direcciones_url }}" required />
@@ -20,6 +22,64 @@
 
         <label>Backoff entre reintentos (segundos)</label>
         <input name="sync_download_backoff_seconds" value="{{ cfg.sync_download_backoff_seconds }}" />
+
+        <h3>Actualización de contribuyentes SII (fuente SII)</h3>
+
+        <label>Frecuencia</label>
+        <select name="sync_frequency" id="sync_frequency">
+            <option value="daily" {% if cfg.sync_frequency == 'daily' %}selected{% endif %}>Diaria</option>
+            <option value="weekly" {% if cfg.sync_frequency == 'weekly' %}selected{% endif %}>Semanal</option>
+            <option value="monthly" {% if cfg.sync_frequency == 'monthly' %}selected{% endif %}>Mensual</option>
+            <option value="yearly" {% if cfg.sync_frequency == 'yearly' %}selected{% endif %}>Anual</option>
+        </select>
+
+        <div id="sync_weekly_block">
+            <label>Días de la semana (puedes elegir más de uno)</label>
+            <div style="display:flex;flex-wrap:wrap;gap:12px;">
+                {% for value, label in weekday_options %}
+                <label style="display:flex;align-items:center;gap:6px;">
+                    <input type="checkbox" name="sync_weekdays" value="{{ value }}" {% if value in selected_weekdays %}checked{% endif %} />
+                    <span>{{ label }}</span>
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div id="sync_monthly_block">
+            <label>Día del mes (1 a 31)</label>
+            <input type="number" min="1" max="31" name="sync_day_of_month" value="{{ cfg.sync_day_of_month or '1' }}" />
+
+            <label>Meses de ejecución (puedes elegir más de uno)</label>
+            <div style="display:flex;flex-wrap:wrap;gap:12px;">
+                {% for value, label in month_options %}
+                <label style="display:flex;align-items:center;gap:6px;">
+                    <input type="checkbox" name="sync_months" value="{{ value }}" {% if value in selected_months %}checked{% endif %} />
+                    <span>{{ label }}</span>
+                </label>
+                {% endfor %}
+            </div>
+            <div class="text-muted">Si no marcas meses, se ejecuta todos los meses.</div>
+        </div>
+
+        <div id="sync_yearly_block">
+            <label>Mes de ejecución anual</label>
+            <select name="sync_yearly_month">
+                {% for value, label in month_options %}
+                <option value="{{ value }}" {% if cfg.sync_yearly_month == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+
+            <label>Día del mes (1 a 31)</label>
+            <input type="number" min="1" max="31" name="sync_yearly_day_of_month" value="{{ cfg.sync_day_of_month or '1' }}" />
+        </div>
+
+        <label>Hora de ejecución (Chile)</label>
+        <div style="display:flex;gap:10px;align-items:center;">
+            <input type="number" min="0" max="23" name="sync_hour" value="{{ cfg.sync_hour or '3' }}" style="width:90px;" />
+            <span>:</span>
+            <input type="number" min="0" max="59" name="sync_minute" value="{{ cfg.sync_minute or '30' }}" style="width:90px;" />
+            <span class="text-muted">Zona horaria: America/Santiago</span>
+        </div>
 
         <h3>Fuente autenticada SII (email DTE)</h3>
 
@@ -67,4 +127,24 @@
         <button type="submit">Guardar</button>
     </form>
 </div>
+<script>
+(function () {
+    const freq = document.getElementById('sync_frequency');
+    const weekly = document.getElementById('sync_weekly_block');
+    const monthly = document.getElementById('sync_monthly_block');
+    const yearly = document.getElementById('sync_yearly_block');
+
+    function refreshScheduleVisibility() {
+        const v = (freq && freq.value) || 'weekly';
+        if (weekly) weekly.style.display = v === 'weekly' ? 'block' : 'none';
+        if (monthly) monthly.style.display = v === 'monthly' ? 'block' : 'none';
+        if (yearly) yearly.style.display = v === 'yearly' ? 'block' : 'none';
+    }
+
+    if (freq) {
+        freq.addEventListener('change', refreshScheduleVisibility);
+    }
+    refreshScheduleVisibility();
+})();
+</script>
 {% endblock %}

@@ -79,6 +79,22 @@ sudo chown -R taxpayerhub:taxpayerhub /opt/taxpayer_hub
 sudo systemctl restart taxpayer-hub
 ```
 
+## Actualizacion Debian
+
+Script recomendado para actualizar codigo/dependencias y reiniciar el servicio:
+
+```bash
+sudo bash scripts/update_debian.sh
+```
+
+Opciones utiles:
+
+```bash
+sudo bash scripts/update_debian.sh --run-apt
+sudo bash scripts/update_debian.sh --skip-pip
+sudo bash scripts/update_debian.sh --source /azursoft/contribuyentes_SII_hub_server --target /opt/taxpayer_hub
+```
+
 ## Desinstalación Debian
 
 Desinstalación básica (mantiene DB/usuario/nginx):

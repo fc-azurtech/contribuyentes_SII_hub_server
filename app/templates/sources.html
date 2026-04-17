@@ -12,6 +12,15 @@
         <label>URL base contribuyentes (opcional)</label>
         <input name="sii_base_contribuyentes_url" value="{{ cfg.sii_base_contribuyentes_url }}" />
 
+        <label>Timeout descarga por archivo (segundos)</label>
+        <input name="sync_download_timeout" value="{{ cfg.sync_download_timeout }}" />
+
+        <label>Reintentos por archivo</label>
+        <input name="sync_download_retries" value="{{ cfg.sync_download_retries }}" />
+
+        <label>Backoff entre reintentos (segundos)</label>
+        <input name="sync_download_backoff_seconds" value="{{ cfg.sync_download_backoff_seconds }}" />
+
         <button type="submit">Guardar</button>
     </form>
 </div>

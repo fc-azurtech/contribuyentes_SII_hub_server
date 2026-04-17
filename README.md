@@ -45,6 +45,7 @@ Para registrar override desde PDF/manual (por ejemplo portal Odoo).
 - La actualización usa staging raw (`stg_direcciones`, `stg_actecos`, `stg_nombres_pj`) y luego consolida en tablas de servicio.
 - El botón **Forzar actualización ahora** se ejecuta en segundo plano.
 - Estado en vivo para UI: `GET /admin/sync/status`.
+- Parametros de descarga configurables: `SYNC_DOWNLOAD_TIMEOUT`, `SYNC_DOWNLOAD_RETRIES`, `SYNC_DOWNLOAD_BACKOFF_SECONDS`.
 
 ## Inicio rápido local
 

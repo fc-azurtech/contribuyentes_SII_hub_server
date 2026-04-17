@@ -88,13 +88,46 @@ class SyncService:
 
         try:
             cfg = self.settings_getter(session)
+            timeout = int(cfg.get("sync_download_timeout") or 180)
+            retries = int(cfg.get("sync_download_retries") or 3)
+            backoff = float(cfg.get("sync_download_backoff_seconds") or 3)
             run.stage = "downloading"
-            run.message = "Downloading datasets"
+            run.progress_percent = 0
+            run.message = f"Downloading ACTECOS (timeout={timeout}s retries={retries})"
             session.commit()
 
-            dir_rows = fetch_zip_rows(cfg["sii_direcciones_url"], timeout=90)
-            act_rows = fetch_zip_rows(cfg["sii_actecos_url"], timeout=90)
-            name_rows = fetch_zip_rows(cfg.get("sii_base_contribuyentes_url", ""), timeout=90)
+            dir_rows = fetch_zip_rows(
+                cfg["sii_direcciones_url"],
+                timeout=timeout,
+                retries=retries,
+                backoff_seconds=backoff,
+                dataset_label="DIRECCIONES",
+            )
+            run.progress_percent = 10
+            run.message = f"Downloading DIRECCIONES (timeout={timeout}s retries={retries})"
+            session.commit()
+
+            act_rows = fetch_zip_rows(
+                cfg["sii_actecos_url"],
+                timeout=timeout,
+                retries=retries,
+                backoff_seconds=backoff,
+                dataset_label="ACTECOS",
+            )
+            run.progress_percent = 20
+            run.message = f"Downloading NOMBRES_PJ (timeout={timeout}s retries={retries})"
+            session.commit()
+
+            name_rows = fetch_zip_rows(
+                cfg.get("sii_base_contribuyentes_url", ""),
+                timeout=timeout,
+                retries=retries,
+                backoff_seconds=backoff,
+                dataset_label="NOMBRES_PJ",
+            )
+            run.progress_percent = 30
+            run.message = f"Download finished dir={len(dir_rows)} act={len(act_rows)} names={len(name_rows)}"
+            session.commit()
 
             run.stage = "staging"
             run.message = f"Loading raw rows dir={len(dir_rows)} act={len(act_rows)} names={len(name_rows)}"

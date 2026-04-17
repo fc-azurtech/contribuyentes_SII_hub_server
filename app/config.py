@@ -44,6 +44,9 @@ class Settings:
     sync_weekday: str = os.getenv("SYNC_WEEKDAY", "sun")
     sync_hour: int = int(os.getenv("SYNC_HOUR", "3"))
     sync_minute: int = int(os.getenv("SYNC_MINUTE", "30"))
+    sync_download_timeout: int = int(os.getenv("SYNC_DOWNLOAD_TIMEOUT", "180"))
+    sync_download_retries: int = int(os.getenv("SYNC_DOWNLOAD_RETRIES", "3"))
+    sync_download_backoff_seconds: int = int(os.getenv("SYNC_DOWNLOAD_BACKOFF_SECONDS", "3"))
 
 
 settings = Settings()

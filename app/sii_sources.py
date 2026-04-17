@@ -219,7 +219,8 @@ def _build_cert_tuple(cert_mode: str, cert_path: str, key_path: str, pfx_path: s
 def _extract_form_payload(html: str):
     forms = re.findall(r"<form\b[^>]*>.*?</form>", html or "", flags=re.IGNORECASE | re.DOTALL)
     if not forms:
-        return "", {}, "", ""
+        # Fallback for pages where inputs are rendered outside a form container.
+        forms = [html or ""]
 
     best_form = forms[0]
     for item in forms:
@@ -245,6 +246,8 @@ def _extract_form_payload(html: str):
             hidden_payload[name] = val
 
     text_names = []
+    rut_like_names = []
+    dv_like_names = []
     for input_match in re.finditer(r"<input\b[^>]*>", best_form, flags=re.IGNORECASE):
         input_tag = input_match.group(0)
         name_match = re.search(r'name\s*=\s*["\']([^"\']+)["\']', input_tag, flags=re.IGNORECASE)
@@ -253,11 +256,25 @@ def _extract_form_payload(html: str):
             continue
         name = name_match.group(1).strip()
         typ = (type_match.group(1).strip().lower() if type_match else "text")
-        if typ in {"text", "search", "number", ""}:
+        if typ not in {"hidden", "submit", "button", "checkbox", "radio", "file"}:
             text_names.append(name)
+            lname = name.lower()
+            if "rut" in lname:
+                rut_like_names.append(name)
+            if lname in {"dv", "digito", "digito_verificador", "dvrut", "rutdv"} or "dv" in lname:
+                dv_like_names.append(name)
 
-    rut_field = text_names[0] if text_names else ""
-    dv_field = text_names[1] if len(text_names) > 1 else ""
+    rut_field = rut_like_names[0] if rut_like_names else (text_names[0] if text_names else "")
+    dv_field = ""
+    if dv_like_names:
+        dv_field = dv_like_names[0]
+    elif len(text_names) > 1:
+        dv_field = text_names[1]
+
+    # If there is only one meaningful field, assume full-rut mode and allow caller to post body-dv there.
+    if rut_field and not dv_field:
+        dv_field = "__FULL_RUT__"
+
     return action, hidden_payload, rut_field, dv_field
 
 
@@ -307,15 +324,35 @@ class AuthenticatedSIIEmailClient:
         self._hidden_payload = {}
         self._rut_field = ""
         self._dv_field = ""
+        self._bootstrap_done = False
 
     def close(self):
         self.session.close()
         if self._temp_dir:
             shutil.rmtree(self._temp_dir, ignore_errors=True)
 
+    def _bootstrap_authenticated_cookie(self):
+        if self._bootstrap_done:
+            return
+
+        auth_url = "https://herculesr.sii.cl/cgi_AUT2000/CAutInicio.cgi"
+        ref = self.query_url
+        try:
+            self.session.post(
+                f"{auth_url}?{ref}",
+                data={"referencia": ref},
+                timeout=self.timeout,
+                allow_redirects=True,
+            )
+            self._bootstrap_done = True
+        except Exception as exc:
+            raise RuntimeError(f"AUT2000 bootstrap failed: {exc}") from exc
+
     def _ensure_form(self):
         if self._rut_field and self._dv_field:
             return
+
+        self._bootstrap_authenticated_cookie()
 
         resp = self.session.get(self.query_url, timeout=self.timeout)
         resp.raise_for_status()
@@ -336,8 +373,11 @@ class AuthenticatedSIIEmailClient:
         body = rut_clean[:-1]
         dv = rut_clean[-1]
         payload = dict(self._hidden_payload)
-        payload[self._rut_field] = body
-        payload[self._dv_field] = dv
+        if self._dv_field == "__FULL_RUT__":
+            payload[self._rut_field] = f"{body}-{dv}"
+        else:
+            payload[self._rut_field] = body
+            payload[self._dv_field] = dv
 
         max_attempts = max(1, int(self.retries) + 1)
         last_exc = None
